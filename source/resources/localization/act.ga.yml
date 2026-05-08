@@ -1,6 +1,6 @@
 # popups
-ok: Ok
-accept: Accept
+ok: Ceart Go Leor
+accept: Glac
 cancel: Cancel
 quit: Quit
 hide: Hide
@@ -9,7 +9,7 @@ next: Next
 prev: Previous
 back: Back
 cont: Continue
-finish: Finish
+finish: Críochnaigh
 "yes": "Yes"
 "no": "No"
 retry: Retry
@@ -18,7 +18,7 @@ later: Later
 
 update_library: Update Blender to the latest version
 restart_now: Restart Now
-trash: Trash
+trash: Bruscar
 remove: Remove
 delete: Delete
 dont_show_again: Don't Show Again
@@ -31,9 +31,9 @@ remove_settings: Remove Settings
 
 reload: Reload
 reload_tooltip: Reload Custom Builds from disk
-search: Search
-after: After
-before: Before
+search: Cuardach
+after: I nDiaidh
+before: Roimh
 
 # left icon
 launch: Launch
@@ -45,8 +45,8 @@ deleting: Deleting
 init: Initialize
 
 prog:
-  downloading: Downloading
-  extracting: Extracting
+  downloading: Ag Íoslódáil
+  extracting: Ag Bain 
   copying: Copying data...
   progress: "%{title}: %{progress} of %{total} MB"
 

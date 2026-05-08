@@ -1,8 +1,8 @@
 import logging
-
 from dataclasses import dataclass
 from pathlib import Path
 
+from modules.file_utils import retry_on_permission_error
 from modules.task import Task
 from PySide6.QtCore import Signal
 from send2trash import send2trash
@@ -29,7 +29,8 @@ class RenameTask(Task):
                 send2trash(dst)
                 logger.debug(f"Removed existing file: {dst}")
 
-            self.src.rename(dst)
+            retry_on_permission_error(self.src.rename, dst)
+
             self.finished.emit(dst, is_removed)
         except OSError:
             self.failure.emit()

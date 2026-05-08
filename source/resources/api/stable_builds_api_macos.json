@@ -1,5 +1,5 @@
 {
-    "api_file_version": "16.0",
+    "api_file_version": "22.0",
     "folders": {
         "2.48.0": {
             "assets": [],
@@ -326,7 +326,7 @@
                         "blinfo": [
                             {
                                 "branch": "lts",
-                                "subversion": "2.83.0-macos",
+                                "subversion": "2.83.0-macOS",
                                 "build_hash": null,
                                 "commit_time": "2020-06-03T15:27:00+00:00",
                                 "custom_name": "",
@@ -344,7 +344,7 @@
                         "blinfo": [
                             {
                                 "branch": "lts",
-                                "subversion": "2.83.1-macos",
+                                "subversion": "2.83.1-macOS",
                                 "build_hash": null,
                                 "commit_time": "2020-06-25T11:58:00+00:00",
                                 "custom_name": "",
@@ -362,7 +362,7 @@
                         "blinfo": [
                             {
                                 "branch": "lts",
-                                "subversion": "2.83.10-macos",
+                                "subversion": "2.83.10-macOS",
                                 "build_hash": null,
                                 "commit_time": "2020-12-09T09:12:00+00:00",
                                 "custom_name": "",
@@ -380,7 +380,7 @@
                         "blinfo": [
                             {
                                 "branch": "lts",
-                                "subversion": "2.83.12-macos",
+                                "subversion": "2.83.12-macOS",
                                 "build_hash": null,
                                 "commit_time": "2021-01-27T09:02:00+00:00",
                                 "custom_name": "",
@@ -398,7 +398,7 @@
                         "blinfo": [
                             {
                                 "branch": "lts",
-                                "subversion": "2.83.13-macos",
+                                "subversion": "2.83.13-macOS",
                                 "build_hash": null,
                                 "commit_time": "2021-03-10T09:25:00+00:00",
                                 "custom_name": "",
@@ -524,7 +524,7 @@
                         "blinfo": [
                             {
                                 "branch": "lts",
-                                "subversion": "2.83.2-macos",
+                                "subversion": "2.83.2-macOS",
                                 "build_hash": null,
                                 "commit_time": "2020-07-09T06:44:00+00:00",
                                 "custom_name": "",
@@ -560,7 +560,7 @@
                         "blinfo": [
                             {
                                 "branch": "lts",
-                                "subversion": "2.83.3-macos",
+                                "subversion": "2.83.3-macOS",
                                 "build_hash": null,
                                 "commit_time": "2020-07-22T06:36:00+00:00",
                                 "custom_name": "",
@@ -578,7 +578,7 @@
                         "blinfo": [
                             {
                                 "branch": "lts",
-                                "subversion": "2.83.4-macos",
+                                "subversion": "2.83.4-macOS",
                                 "build_hash": null,
                                 "commit_time": "2020-08-05T06:27:00+00:00",
                                 "custom_name": "",
@@ -596,7 +596,7 @@
                         "blinfo": [
                             {
                                 "branch": "lts",
-                                "subversion": "2.83.5-macos",
+                                "subversion": "2.83.5-macOS",
                                 "build_hash": null,
                                 "commit_time": "2020-08-19T06:40:00+00:00",
                                 "custom_name": "",
@@ -614,7 +614,7 @@
                         "blinfo": [
                             {
                                 "branch": "lts",
-                                "subversion": "2.83.6-macos",
+                                "subversion": "2.83.6-macOS",
                                 "build_hash": null,
                                 "commit_time": "2020-09-09T08:21:00+00:00",
                                 "custom_name": "",
@@ -632,7 +632,7 @@
                         "blinfo": [
                             {
                                 "branch": "lts",
-                                "subversion": "2.83.7-macos",
+                                "subversion": "2.83.7-macOS",
                                 "build_hash": null,
                                 "commit_time": "2020-09-30T06:41:00+00:00",
                                 "custom_name": "",
@@ -650,7 +650,7 @@
                         "blinfo": [
                             {
                                 "branch": "lts",
-                                "subversion": "2.83.8-macos",
+                                "subversion": "2.83.8-macOS",
                                 "build_hash": null,
                                 "commit_time": "2020-10-21T09:05:00+00:00",
                                 "custom_name": "",
@@ -668,7 +668,7 @@
                         "blinfo": [
                             {
                                 "branch": "lts",
-                                "subversion": "2.83.9-macos",
+                                "subversion": "2.83.9-macOS",
                                 "build_hash": null,
                                 "commit_time": "2020-11-11T15:54:00+00:00",
                                 "custom_name": "",
@@ -691,7 +691,7 @@
                         "blinfo": [
                             {
                                 "branch": "stable",
-                                "subversion": "2.90.0-macos",
+                                "subversion": "2.90.0-macOS",
                                 "build_hash": null,
                                 "commit_time": "2020-08-31T12:32:00+00:00",
                                 "custom_name": "",
@@ -709,7 +709,7 @@
                         "blinfo": [
                             {
                                 "branch": "stable",
-                                "subversion": "2.90.1-macos",
+                                "subversion": "2.90.1-macOS",
                                 "build_hash": null,
                                 "commit_time": "2020-09-23T08:53:00+00:00",
                                 "custom_name": "",
@@ -732,7 +732,7 @@
                         "blinfo": [
                             {
                                 "branch": "stable",
-                                "subversion": "2.91.0-macos",
+                                "subversion": "2.91.0-macOS",
                                 "build_hash": null,
                                 "commit_time": "2020-11-25T09:23:00+00:00",
                                 "custom_name": "",
@@ -750,7 +750,7 @@
                         "blinfo": [
                             {
                                 "branch": "stable",
-                                "subversion": "2.91.2-macos",
+                                "subversion": "2.91.2-macOS",
                                 "build_hash": null,
                                 "commit_time": "2021-01-20T12:04:00+00:00",
                                 "custom_name": "",
@@ -773,7 +773,7 @@
                         "blinfo": [
                             {
                                 "branch": "stable",
-                                "subversion": "2.92.0-macos",
+                                "subversion": "2.92.0-macOS",
                                 "build_hash": null,
                                 "commit_time": "2021-02-25T12:03:00+00:00",
                                 "custom_name": "",
@@ -4044,6 +4044,114 @@
                     }
                 ],
                 [
+                    "https://download.blender.org/release/Blender4.2/blender-4.2.17-macos-arm64.dmg",
+                    {
+                        "file_version": "1.5",
+                        "blinfo": [
+                            {
+                                "branch": "lts",
+                                "subversion": "4.2.17-macos-arm64",
+                                "build_hash": null,
+                                "commit_time": "2026-01-20T08:33:00+00:00",
+                                "custom_name": "",
+                                "is_favorite": false,
+                                "custom_executable": null,
+                                "is_frozen": false
+                            }
+                        ]
+                    }
+                ],
+                [
+                    "https://download.blender.org/release/Blender4.2/blender-4.2.17-macos-x64.dmg",
+                    {
+                        "file_version": "1.5",
+                        "blinfo": [
+                            {
+                                "branch": "lts",
+                                "subversion": "4.2.17-macos-x64",
+                                "build_hash": null,
+                                "commit_time": "2026-01-20T08:34:00+00:00",
+                                "custom_name": "",
+                                "is_favorite": false,
+                                "custom_executable": null,
+                                "is_frozen": false
+                            }
+                        ]
+                    }
+                ],
+                [
+                    "https://download.blender.org/release/Blender4.2/blender-4.2.18-macos-arm64.dmg",
+                    {
+                        "file_version": "1.5",
+                        "blinfo": [
+                            {
+                                "branch": "lts",
+                                "subversion": "4.2.18-macos-arm64",
+                                "build_hash": null,
+                                "commit_time": "2026-02-17T08:29:00+00:00",
+                                "custom_name": "",
+                                "is_favorite": false,
+                                "custom_executable": null,
+                                "is_frozen": false
+                            }
+                        ]
+                    }
+                ],
+                [
+                    "https://download.blender.org/release/Blender4.2/blender-4.2.18-macos-x64.dmg",
+                    {
+                        "file_version": "1.5",
+                        "blinfo": [
+                            {
+                                "branch": "lts",
+                                "subversion": "4.2.18-macos-x64",
+                                "build_hash": null,
+                                "commit_time": "2026-02-17T08:31:00+00:00",
+                                "custom_name": "",
+                                "is_favorite": false,
+                                "custom_executable": null,
+                                "is_frozen": false
+                            }
+                        ]
+                    }
+                ],
+                [
+                    "https://download.blender.org/release/Blender4.2/blender-4.2.19-macos-arm64.dmg",
+                    {
+                        "file_version": "1.5",
+                        "blinfo": [
+                            {
+                                "branch": "lts",
+                                "subversion": "4.2.19-macos-arm64",
+                                "build_hash": null,
+                                "commit_time": "2026-03-17T08:57:00+00:00",
+                                "custom_name": "",
+                                "is_favorite": false,
+                                "custom_executable": null,
+                                "is_frozen": false
+                            }
+                        ]
+                    }
+                ],
+                [
+                    "https://download.blender.org/release/Blender4.2/blender-4.2.19-macos-x64.dmg",
+                    {
+                        "file_version": "1.5",
+                        "blinfo": [
+                            {
+                                "branch": "lts",
+                                "subversion": "4.2.19-macos-x64",
+                                "build_hash": null,
+                                "commit_time": "2026-03-17T08:57:00+00:00",
+                                "custom_name": "",
+                                "is_favorite": false,
+                                "custom_executable": null,
+                                "is_frozen": false
+                            }
+                        ]
+                    }
+                ],
+                [
                     "https://download.blender.org/release/Blender4.2/blender-4.2.2-macos-arm64.dmg",
                     {
                         "file_version": "1.5",
@@ -4071,6 +4179,42 @@
                                 "subversion": "4.2.2-macos-x64",
                                 "build_hash": null,
                                 "commit_time": "2024-09-24T08:05:00+00:00",
+                                "custom_name": "",
+                                "is_favorite": false,
+                                "custom_executable": null,
+                                "is_frozen": false
+                            }
+                        ]
+                    }
+                ],
+                [
+                    "https://download.blender.org/release/Blender4.2/blender-4.2.20-macos-arm64.dmg",
+                    {
+                        "file_version": "1.5",
+                        "blinfo": [
+                            {
+                                "branch": "lts",
+                                "subversion": "4.2.20-macos-arm64",
+                                "build_hash": null,
+                                "commit_time": "2026-04-21T07:41:00+00:00",
+                                "custom_name": "",
+                                "is_favorite": false,
+                                "custom_executable": null,
+                                "is_frozen": false
+                            }
+                        ]
+                    }
+                ],
+                [
+                    "https://download.blender.org/release/Blender4.2/blender-4.2.20-macos-x64.dmg",
+                    {
+                        "file_version": "1.5",
+                        "blinfo": [
+                            {
+                                "branch": "lts",
+                                "subversion": "4.2.20-macos-x64",
+                                "build_hash": null,
+                                "commit_time": "2026-04-21T07:41:00+00:00",
                                 "custom_name": "",
                                 "is_favorite": false,
                                 "custom_executable": null,
@@ -4332,7 +4476,7 @@
                     }
                 ]
             ],
-            "modified_date": "2025-11-18T08:18:00"
+            "modified_date": "2026-04-21T07:41:00"
         },
         "4.3.0": {
             "assets": [
@@ -4813,9 +4957,153 @@
                             }
                         ]
                     }
+                ],
+                [
+                    "https://download.blender.org/release/Blender4.5/blender-4.5.6-macos-arm64.dmg",
+                    {
+                        "file_version": "1.5",
+                        "blinfo": [
+                            {
+                                "branch": "lts",
+                                "subversion": "4.5.6-macos-arm64",
+                                "build_hash": null,
+                                "commit_time": "2026-01-20T08:34:00+00:00",
+                                "custom_name": "",
+                                "is_favorite": false,
+                                "custom_executable": null,
+                                "is_frozen": false
+                            }
+                        ]
+                    }
+                ],
+                [
+                    "https://download.blender.org/release/Blender4.5/blender-4.5.6-macos-x64.dmg",
+                    {
+                        "file_version": "1.5",
+                        "blinfo": [
+                            {
+                                "branch": "lts",
+                                "subversion": "4.5.6-macos-x64",
+                                "build_hash": null,
+                                "commit_time": "2026-01-20T08:32:00+00:00",
+                                "custom_name": "",
+                                "is_favorite": false,
+                                "custom_executable": null,
+                                "is_frozen": false
+                            }
+                        ]
+                    }
+                ],
+                [
+                    "https://download.blender.org/release/Blender4.5/blender-4.5.7-macos-arm64.dmg",
+                    {
+                        "file_version": "1.5",
+                        "blinfo": [
+                            {
+                                "branch": "lts",
+                                "subversion": "4.5.7-macos-arm64",
+                                "build_hash": null,
+                                "commit_time": "2026-02-17T08:30:00+00:00",
+                                "custom_name": "",
+                                "is_favorite": false,
+                                "custom_executable": null,
+                                "is_frozen": false
+                            }
+                        ]
+                    }
+                ],
+                [
+                    "https://download.blender.org/release/Blender4.5/blender-4.5.7-macos-x64.dmg",
+                    {
+                        "file_version": "1.5",
+                        "blinfo": [
+                            {
+                                "branch": "lts",
+                                "subversion": "4.5.7-macos-x64",
+                                "build_hash": null,
+                                "commit_time": "2026-02-17T08:32:00+00:00",
+                                "custom_name": "",
+                                "is_favorite": false,
+                                "custom_executable": null,
+                                "is_frozen": false
+                            }
+                        ]
+                    }
+                ],
+                [
+                    "https://download.blender.org/release/Blender4.5/blender-4.5.8-macos-arm64.dmg",
+                    {
+                        "file_version": "1.5",
+                        "blinfo": [
+                            {
+                                "branch": "lts",
+                                "subversion": "4.5.8-macos-arm64",
+                                "build_hash": null,
+                                "commit_time": "2026-03-17T08:57:00+00:00",
+                                "custom_name": "",
+                                "is_favorite": false,
+                                "custom_executable": null,
+                                "is_frozen": false
+                            }
+                        ]
+                    }
+                ],
+                [
+                    "https://download.blender.org/release/Blender4.5/blender-4.5.8-macos-x64.dmg",
+                    {
+                        "file_version": "1.5",
+                        "blinfo": [
+                            {
+                                "branch": "lts",
+                                "subversion": "4.5.8-macos-x64",
+                                "build_hash": null,
+                                "commit_time": "2026-03-17T08:58:00+00:00",
+                                "custom_name": "",
+                                "is_favorite": false,
+                                "custom_executable": null,
+                                "is_frozen": false
+                            }
+                        ]
+                    }
+                ],
+                [
+                    "https://download.blender.org/release/Blender4.5/blender-4.5.9-macos-arm64.dmg",
+                    {
+                        "file_version": "1.5",
+                        "blinfo": [
+                            {
+                                "branch": "lts",
+                                "subversion": "4.5.9-macos-arm64",
+                                "build_hash": null,
+                                "commit_time": "2026-04-21T07:41:00+00:00",
+                                "custom_name": "",
+                                "is_favorite": false,
+                                "custom_executable": null,
+                                "is_frozen": false
+                            }
+                        ]
+                    }
+                ],
+                [
+                    "https://download.blender.org/release/Blender4.5/blender-4.5.9-macos-x64.dmg",
+                    {
+                        "file_version": "1.5",
+                        "blinfo": [
+                            {
+                                "branch": "lts",
+                                "subversion": "4.5.9-macos-x64",
+                                "build_hash": null,
+                                "commit_time": "2026-04-21T07:40:00+00:00",
+                                "custom_name": "",
+                                "is_favorite": false,
+                                "custom_executable": null,
+                                "is_frozen": false
+                            }
+                        ]
+                    }
                 ]
             ],
-            "modified_date": "2025-11-18T08:18:00"
+            "modified_date": "2026-04-21T07:41:00"
         },
         "5.0.0": {
             "assets": [
@@ -4836,9 +5124,68 @@
                             }
                         ]
                     }
+                ],
+                [
+                    "https://download.blender.org/release/Blender5.0/blender-5.0.1-macos-arm64.dmg",
+                    {
+                        "file_version": "1.5",
+                        "blinfo": [
+                            {
+                                "branch": "stable",
+                                "subversion": "5.0.1-macos-arm64",
+                                "build_hash": null,
+                                "commit_time": "2025-12-16T10:14:00+00:00",
+                                "custom_name": "",
+                                "is_favorite": false,
+                                "custom_executable": null,
+                                "is_frozen": false
+                            }
+                        ]
+                    }
                 ]
             ],
-            "modified_date": "2025-11-18T12:00:00"
+            "modified_date": "2025-12-16T10:15:00"
+        },
+        "5.1.0": {
+            "assets": [
+                [
+                    "https://download.blender.org/release/Blender5.1/blender-5.1.0-macos-arm64.dmg",
+                    {
+                        "file_version": "1.5",
+                        "blinfo": [
+                            {
+                                "branch": "stable",
+                                "subversion": "5.1.0-macos-arm64",
+                                "build_hash": null,
+                                "commit_time": "2026-03-17T10:32:00+00:00",
+                                "custom_name": "",
+                                "is_favorite": false,
+                                "custom_executable": null,
+                                "is_frozen": false
+                            }
+                        ]
+                    }
+                ],
+                [
+                    "https://download.blender.org/release/Blender5.1/blender-5.1.1-macos-arm64.dmg",
+                    {
+                        "file_version": "1.5",
+                        "blinfo": [
+                            {
+                                "branch": "stable",
+                                "subversion": "5.1.1-macos-arm64",
+                                "build_hash": null,
+                                "commit_time": "2026-04-14T07:28:00+00:00",
+                                "custom_name": "",
+                                "is_favorite": false,
+                                "custom_executable": null,
+                                "is_frozen": false
+                            }
+                        ]
+                    }
+                ]
+            ],
+            "modified_date": "2026-04-14T07:28:00"
         }
     }
 }

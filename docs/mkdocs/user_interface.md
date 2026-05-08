@@ -1,5 +1,3 @@
-<style>body {text-align: justify}</style>
-
 # User Interface
 
 ## Main Window
@@ -26,10 +24,16 @@ The top horizontal menu bar contains following buttons from left to right:
     * **Stable**
     * **Daily**
     * **Experimental**
+    * **Bforartists**
+    * **UPBGE**
+    * **UPBGE Weekly**
 * **Downloads** - list of available official builds
     * **Stable**
     * **Daily**
     * **Experimental**
+    * **Bforartists**
+    * **UPBGE**
+    * **UPBGE Weekly**
 * **User** - list of favorite and custom builds defined by user
     * **Favorites**
     * **Custom**

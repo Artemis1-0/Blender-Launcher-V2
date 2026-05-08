@@ -5,8 +5,8 @@ import sys
 from pathlib import Path
 from shutil import copyfile
 
-from modules._platform import get_cache_path, get_cwd, get_platform, is_frozen
 from modules.icons import get_bl_file_location
+from modules.platform_utils import get_cache_path, get_cwd, get_platform, is_frozen
 from modules.settings import get_library_folder
 
 
@@ -17,13 +17,12 @@ def generate_blender_shortcut(folder, name, destination: Path):
 
     if sys.platform == "win32":
         import win32com.client
-        from win32comext.shell import shell, shellcon
 
         targetpath = library_folder / folder / "blender.exe"
         workingdir = library_folder / folder
 
         if getattr(sys, "frozen", False):
-            icon = sys._MEIPASS + "/files/winblender.ico"  # noqa: SLF001
+            icon = (Path(getattr(sys, "_MEIPASS", "")) / "files" / "winblender.ico").as_posix()
         else:
             icon = Path("./source/resources/icons/winblender.ico").resolve().as_posix()
 
@@ -39,7 +38,6 @@ def generate_blender_shortcut(folder, name, destination: Path):
         wscript.save()
     elif platform == "Linux":
         _exec = library_folder / folder / "blender"
-        icon = library_folder / folder / "blender.svg"
 
         kws = (
             "3d;cg;modeling;animation;painting;"
@@ -47,6 +45,7 @@ def generate_blender_shortcut(folder, name, destination: Path):
             "video tracking;rendering;render engine;"
             "cycles;game engine;python;"
         )
+        from shlex import quote
 
         desktop_entry = "\n".join(
             [
@@ -54,12 +53,13 @@ def generate_blender_shortcut(folder, name, destination: Path):
                 f"Name={name}",
                 "Comment=3D modeling, animation, rendering and post-production",
                 f"Keywords={kws}",
-                "Icon={}".format(icon.as_posix().replace(" ", r"\ ")),
+                "Icon=blender",
                 "Terminal=false",
                 "Type=Application",
+                "PrefersNonDefaultGPU=true",
                 "Categories=Graphics;3DGraphics;",
                 "MimeType=application/x-blender;",
-                "Exec={} %f".format(_exec.as_posix().replace(" ", r"\ ")),
+                f"Exec={quote(_exec)} %f",
             ]
         )
         with open(destination, "w", encoding="utf-8") as file:
@@ -215,8 +215,8 @@ def generate_program_shortcut(destination: Path, exe=sys.executable):
     platform = get_platform()
 
     if sys.platform == "win32":
-        import win32com.client
         import pythoncom
+        import win32com.client
 
         dest = destination.with_suffix(".lnk").as_posix()
         # create the shortcut
@@ -257,7 +257,7 @@ def generate_program_shortcut(destination: Path, exe=sys.executable):
                 "GenericName=Launcher",
                 f"Exec={source}",
                 "MimeType=application/x-blender;",
-                "Icon=blender-icon",
+                "Icon=blenderlauncher",
                 "Terminal=false",
                 "Type=Application",
                 "Categories=Graphics;3DGraphics",

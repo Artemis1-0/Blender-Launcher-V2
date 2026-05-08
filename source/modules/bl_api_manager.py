@@ -1,12 +1,11 @@
-import sys
 import json
 import logging
-
+import sys
 from functools import lru_cache
 from pathlib import Path
-from semver import Version
 
-from modules._platform import get_config_path, get_platform
+from modules.platform_utils import get_config_path, get_platform
+from semver import Version
 
 logger = logging.getLogger()
 
@@ -15,8 +14,10 @@ BL_API_PATH = CONFIG_PATH / "Blender Launcher API.json"
 STABLE_BUILD_PATH = CONFIG_PATH / "stable_builds.json"
 
 if getattr(sys, "frozen", False):
-    INTERNAL_BL_API_PATH = Path(sys._MEIPASS) / "files/blender_launcher_api.json"  # noqa: SLF001
-    INTERNAL_STABLE_BUILD_PATH = Path(sys._MEIPASS) / f"files/stable_builds_api_{get_platform().lower()}.json"  # noqa: SLF001
+    INTERNAL_BL_API_PATH = Path(getattr(sys, "_MEIPASS", "")) / "files/blender_launcher_api.json"
+    INTERNAL_STABLE_BUILD_PATH = (
+        Path(getattr(sys, "_MEIPASS", "")) / f"files/stable_builds_api_{get_platform().lower()}.json"
+    )
 else:
     INTERNAL_BL_API_PATH = Path("source/resources/api/blender_launcher_api.json").resolve()
     INTERNAL_STABLE_BUILD_PATH = Path(f"source/resources/api/stable_builds_api_{get_platform().lower()}.json").resolve()
@@ -47,7 +48,7 @@ def update_stable_builds_cache(data: dict | None) -> None:
                     logger.info(
                         f"Current {version_current} build cache version is older than the new data ({version_new}). Updating."
                     )
-            except Exception as e:
+            except Exception:
                 logger.exception("Failed to compare build cache versions from existing file. Overwriting file.")
 
         with STABLE_BUILD_PATH.open("w", encoding="utf-8") as f:
@@ -99,8 +100,7 @@ def update_local_api_files(data: dict) -> None:
 
 def read_blender_version_list() -> list[Version]:
     return [
-        Version.parse(version, optional_minor_and_patch=True)
-        for version in read_bl_api().get("blender_versions", {}).keys()
+        Version.parse(version, optional_minor_and_patch=True) for version in read_bl_api().get("blender_versions", {})
     ]
 
 

@@ -1,43 +1,42 @@
 from __future__ import annotations
 
+import contextlib
+import logging
 import os
 import re
-import logging
-import contextlib
 import subprocess
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from i18n import t
 from items.base_list_widget_item import BaseListWidgetItem
-from modules._platform import _call, get_blender_config_folder, get_platform, is_frozen, get_environment
+from modules.blender_update_manager import available_blender_update, is_major_version_update
 from modules.build_info import (
     BuildInfo,
     LaunchMode,
     LaunchOpenLast,
     LaunchWithBlendFile,
-    ReadBuildTask,
     WriteBuildTask,
+    get_fork_config_paths,
     launch_build,
 )
+from modules.enums import MessageType
+from modules.file_utils import retry_on_permission_error
+from modules.fonts import Fonts
+from modules.platform_utils import _call, get_blender_config_folder, get_environment, get_platform, is_frozen
 from modules.settings import (
     get_default_delete_action,
     get_favorite_path,
     get_library_folder,
     get_mark_as_favorite,
-    set_favorite_path,
+    get_on_blender_launch_action,
+    get_prepend_prnum_on_prlabel,
     get_show_update_button,
 )
 from modules.shortcut import generate_blender_shortcut, get_default_shortcut_destination
-from modules.blender_update_manager import available_blender_update, is_major_version_update
-from windows.popup_window import PopupIcon, PopupWindow
-from PySide6.QtCore import Qt, Signal, Slot
-from PySide6.QtGui import (
-    QAction,
-    QDragEnterEvent,
-    QDragLeaveEvent,
-    QDropEvent,
-    QHoverEvent,
-)
+from PySide6.QtCore import Qt, QUrl, Signal, Slot
+from PySide6.QtGui import QAction, QDesktopServices, QDragEnterEvent, QDragLeaveEvent, QDropEvent, QHoverEvent
 from PySide6.QtWidgets import QApplication, QHBoxLayout, QLabel, QWidget
 from threads.observer import Observer
 from threads.register import Register
@@ -51,28 +50,34 @@ from widgets.datetime_widget import DateTimeWidget
 from widgets.elided_text_label import ElidedTextLabel
 from widgets.left_icon_button_widget import LeftIconButtonWidget
 from windows.custom_build_dialog_window import CustomBuildDialogWindow
-from windows.popup_window import PopupIcon, PopupWindow
 from windows.file_dialog_window import FileDialogWindow
+from windows.popup_window import Popup
 
 if TYPE_CHECKING:
+    from widgets.base_list_widget import BaseListWidget
     from windows.main_window import BlenderLauncher
 
 logger = logging.getLogger()
 
 
 class LibraryWidget(BaseBuildWidget):
-    initialized = Signal()
+    add_as_quick_launch = Signal(QWidget)
 
     def __init__(
         self,
         parent: BlenderLauncher,
         item: BaseListWidgetItem,
-        link,
-        list_widget,
+        link: Path,
+        list_widget: BaseListWidget,
+        build_info: BuildInfo,
         show_new=False,
         parent_widget=None,
     ):
-        super().__init__(parent=parent)
+        super().__init__(
+            parent=parent,
+            item=item,
+            build_info=build_info,
+        )
         self.setAcceptDrops(True)
         self.setAttribute(Qt.WidgetAttribute.WA_Hover)
         self.setMouseTracking(True)
@@ -80,16 +85,14 @@ class LibraryWidget(BaseBuildWidget):
         self._hovering_and_shifting = False
         self._hovered = False
 
-        self.parent: BlenderLauncher = parent
-        self.item: BaseListWidgetItem = item
+        self.launcher: BlenderLauncher = parent
         self.link = Path(link)
         self.list_widget = list_widget
         self.show_new = show_new
         self.observer = None
-        self.build_info: BuildInfo | None = None
         self.child_widget = None
         self.parent_widget = parent_widget
-        self.is_damaged = False
+        self.move_portable_settings = False
 
         self.destroyed.connect(lambda: self._destroyed())
 
@@ -106,56 +109,18 @@ class LibraryWidget(BaseBuildWidget):
         self.outer_layout.addWidget(self.layout_widget)
         self.setLayout(self.outer_layout)
 
-        if self.parent_widget is None:
-            self.setEnabled(False)
-            self.infoLabel = QLabel("Loading build information...")
-            self.infoLabel.setWordWrap(True)
-
-            self.launchButton = LeftIconButtonWidget("", parent=self)
-            self.launchButton.setFixedWidth(85)
-            self.launchButton.setProperty("CancelButton", True)
-
-            self.layout.addWidget(self.launchButton)
-            self.layout.addWidget(self.infoLabel, stretch=1)
-
-            a = ReadBuildTask(link)
-            a.finished.connect(self.draw)
-            a.failure.connect(self.trigger_damaged)
-
-            self.parent.task_queue.append(a)
-
-        else:
-            self.draw(self.parent_widget.build_info)
-
-    @Slot()
-    def trigger_damaged(self, exception: Exception = None):
-        if exception:
-            logger.error(f"Failed to read build info for {self.link.name}: {exception}")
-        self.infoLabel.setText(f"Build *{self.link.name}* is damaged!")
-        self.launchButton.set_text("Delete")
-        self.launchButton.clicked.connect(self.ask_remove_from_drive)
-        self.setEnabled(True)
-        self.is_damaged = True
-        # Keep build_info as None to prevent further errors
-
-    def draw(self, build_info: BuildInfo):
-        if self.parent_widget is None:
-            for i in reversed(range(self.layout.count())):
-                self.layout.itemAt(i).widget().setParent(None)
-
-        self.build_info = build_info
         self.branch = self.build_info.branch
         self.item.date = build_info.commit_time
 
-        self.launchButton = LeftIconButtonWidget("Launch", parent=self)
+        self.launchButton = LeftIconButtonWidget(t("act.launch"), parent=self)
         self.launchButton.setFixedWidth(95)
         self.launchButton.setProperty("LaunchButton", True)
         self._launch_icon = None
 
-        self.updateButton = LeftIconButtonWidget("", self.parent.icons.update, parent=self)
+        self.updateButton = LeftIconButtonWidget("", self.launcher.icons.update, parent=self)
         self.updateButton.setFixedWidth(25)
         self.updateButton.setProperty("UpdateButton", True)
-        self.updateButton.setToolTip("Update Blender to the latest version")
+        self.updateButton.setToolTip(t("act.update_library"))
         self.updateButton.hide()
 
         self.subversionLabel = QLabel(self.build_info.display_version)
@@ -165,12 +130,20 @@ class LibraryWidget(BaseBuildWidget):
         self.branchLabel = ElidedTextLabel(self.build_info.custom_name or self.build_info.display_label)
         self.commitTimeLabel = DateTimeWidget(self.build_info.commit_time, self.build_info.build_hash)
 
-        self.build_state_widget = BuildStateWidget(self.parent.icons, self)
+        self.build_state_widget = BuildStateWidget(self.launcher.icons, self)
 
         self.layout.addWidget(self.launchButton)
         self.layout.addWidget(self.updateButton)
         self.layout.addWidget(self.subversionLabel)
         self.layout.addWidget(self.branchLabel, stretch=1)
+
+        # Connect to column width changes from the page widget
+        page_widget = self.list_widget.page
+        if page_widget is not None:
+            page_widget.column_widths_changed.connect(self._update_column_widths)
+            # Apply initial column widths
+            widths = page_widget.get_column_widths()
+            self._update_column_widths(widths[0], widths[1], widths[2])
 
         if self.parent_widget is not None:
             self.lineEdit = BaseLineEdit(self)
@@ -195,7 +168,7 @@ class LibraryWidget(BaseBuildWidget):
 
         # Context menu
         self.menu_extended = BaseMenuWidget(parent=self)
-        self.menu_extended.setFont(self.parent.font_10)
+        self.menu_extended.setFont(Fonts.get().font_10)
 
         # For checking if shift is held on menus
         self.menu.enable_shifting()
@@ -204,33 +177,29 @@ class LibraryWidget(BaseBuildWidget):
         self.menu.holding_shift.connect(self.update_config_action)
         self.menu_extended.holding_shift.connect(self.update_delete_action)
 
-        self.deleteAction = QAction("Delete From Drive", self)
-        self.deleteAction.setIcon(self.parent.icons.delete)
+        self.deleteAction = QAction(t("act.a.delete"), self)
+        self.deleteAction.setIcon(self.launcher.icons.delete)
         self.deleteAction.triggered.connect(self.ask_remove_from_drive)
 
-        self.editAction = QAction("Edit Build...", self)
-        self.editAction.setIcon(self.parent.icons.settings)
+        self.editAction = QAction(t("act.a.edit"), self)
+        self.editAction.setIcon(self.launcher.icons.settings)
         self.editAction.triggered.connect(self.edit_build)
 
-        self.openRecentAction = QAction("Open Previous File", self)
-        self.openRecentAction.setIcon(self.parent.icons.file)
+        self.openRecentAction = QAction(t("act.a.prev"), self)
+        self.openRecentAction.setIcon(self.launcher.icons.file)
         self.openRecentAction.triggered.connect(lambda: self.launch(launch_mode=LaunchOpenLast()))
-        self.openRecentAction.setToolTip(
-            "This action opens the last file used in this build."
-            "\n(Appends `--open-last` to the execution arguments)"
-            "\nSHORTCUT: Shift + Launch or Doubleclick"
-        )
+        self.openRecentAction.setToolTip(t("act.a.prev_tooltip"))
 
-        self.addToQuickLaunchAction = QAction("Add To Quick Launch", self)
-        self.addToQuickLaunchAction.setIcon(self.parent.icons.quick_launch)
+        self.addToQuickLaunchAction = QAction(t("act.a.quick_launch"), self)
+        self.addToQuickLaunchAction.setIcon(self.launcher.icons.quick_launch)
         self.addToQuickLaunchAction.triggered.connect(self.add_to_quick_launch)
 
-        self.addToFavoritesAction = QAction("Add To Favorites", self)
-        self.addToFavoritesAction.setIcon(self.parent.icons.favorite)
+        self.addToFavoritesAction = QAction(t("act.a.fav.add"), self)
+        self.addToFavoritesAction.setIcon(self.launcher.icons.favorite)
         self.addToFavoritesAction.triggered.connect(self.add_to_favorites)
 
-        self.removeFromFavoritesAction = QAction("Remove From Favorites", self)
-        self.removeFromFavoritesAction.setIcon(self.parent.icons.favorite)
+        self.removeFromFavoritesAction = QAction(t("act.fav.rem"), self)
+        self.removeFromFavoritesAction.setIcon(self.launcher.icons.favorite)
         self.removeFromFavoritesAction.triggered.connect(self.remove_from_favorites)
 
         if self.parent_widget is not None:
@@ -238,56 +207,57 @@ class LibraryWidget(BaseBuildWidget):
         else:
             self.removeFromFavoritesAction.setVisible(False)
 
-        self.updateBlenderBuildAction = QAction("Update Blender Build")
-        self.updateBlenderBuildAction.setIcon(self.parent.icons.update)
-        self.updateBlenderBuildAction.triggered.connect(self._trigger_update_download)
-        self.updateBlenderBuildAction.setToolTip("Update this build to the latest version")
+        self.updateBlenderBuildAction = QAction(t("act.a.update"))
+        self.updateBlenderBuildAction.setIcon(self.launcher.icons.update)
+        self.updateBlenderBuildAction.triggered.connect(self.trigger_update_download)
+        self.updateBlenderBuildAction.setToolTip(t("act.a.update_tooltip"))
         self.updateBlenderBuildAction.setVisible(False)
 
-        self.registerExtentionAction = QAction("Register Extension")
-        self.registerExtentionAction.setToolTip("Use this build for .blend files and to display thumbnails")
+        self.fetchPrNameAction = QAction(t("act.a.fetch_pr_name"))
+        self.fetchPrNameAction.triggered.connect(self.fetch_pr_name)
+
+        self.registerExtentionAction = QAction(t("act.a.register"))
+        self.registerExtentionAction.setToolTip(t("act.a.register_tooltip"))
         self.registerExtentionAction.triggered.connect(self.register_extension)
 
-        self.createShortcutAction = QAction("Create Shortcut")
+        self.createShortcutAction = QAction(t("act.a.shortcut"))
         self.createShortcutAction.triggered.connect(self.create_shortcut)
 
-        self.showBuildFolderAction = QAction("Show Build Folder")
-        self.showBuildFolderAction.setIcon(self.parent.icons.folder)
+        self.showBuildFolderAction = QAction(t("act.a.folder_build"))
+        self.showBuildFolderAction.setIcon(self.launcher.icons.folder)
         self.showBuildFolderAction.triggered.connect(self.show_build_folder)
 
         config_path = self.make_portable_path()
 
-        self.showConfigFolderAction = QAction(
-            "Show Portable Config Folder" if config_path.is_dir() else "Show Config Folder"
-        )
-        self.showConfigFolderAction.setIcon(self.parent.icons.folder)
+        self.showConfigFolderAction = QAction(t("act.a.config_portable") if config_path.is_dir() else t("act.a.config"))
+        self.showConfigFolderAction.setIcon(self.launcher.icons.folder)
         self.showConfigFolderAction.triggered.connect(self.show_config_folder)
 
-        self.createSymlinkAction = QAction("Create Symlink")
+        self.createSymlinkAction = QAction(t("act.a.symlink"))
         self.createSymlinkAction.triggered.connect(self.create_symlink)
 
-        self.installTemplateAction = QAction("Install Template")
+        self.installTemplateAction = QAction(t("act.a.template"))
         self.installTemplateAction.triggered.connect(self.install_template)
 
-        self.makePortableAction = QAction("Unmake Portable" if config_path.is_dir() else "Make Portable")
+        self.makePortableAction = QAction(t("act.a.port.rem") if config_path.is_dir() else t("act.a.port.add"))
         self.makePortableAction.triggered.connect(self.make_portable)
 
-        self.copyBuildHash = QAction("Copy Build Hash")
+        self.copyBuildHash = QAction(t("act.a.hash"))
         self.copyBuildHash.triggered.connect(self.copy_build_hash)
 
-        self.freezeUpdate = QAction("Unfreeze Update" if self.build_info.is_frozen else "Freeze Update")
+        self.freezeUpdate = QAction(t("act.a.freeze.rem") if self.build_info.is_frozen else t("act.a.freeze.add"))
         self.freezeUpdate.triggered.connect(self.freeze_update)
 
-        self.debugMenu = BaseMenuWidget("Debug", parent=self)
-        self.debugMenu.setFont(self.parent.font_10)
+        self.debugMenu = BaseMenuWidget(t("act.a.d.d"), parent=self)
+        self.debugMenu.setFont(Fonts.get().font_10)
 
-        self.debugLogAction = QAction("Debug Log")
+        self.debugLogAction = QAction(t("act.a.d.log"))
         self.debugLogAction.triggered.connect(lambda: self.launch(exe="blender_debug_log.cmd"))
-        self.debugFactoryStartupAction = QAction("Factory Startup")
+        self.debugFactoryStartupAction = QAction(t("act.a.d.factory"))
         self.debugFactoryStartupAction.triggered.connect(lambda: self.launch(exe="blender_factory_startup.cmd"))
-        self.debugGpuTemplateAction = QAction("Debug GPU")
+        self.debugGpuTemplateAction = QAction(t("act.a.d.gpu"))
         self.debugGpuTemplateAction.triggered.connect(lambda: self.launch(exe="blender_debug_gpu.cmd"))
-        self.debugGpuGWTemplateAction = QAction("Debug GPU Glitch Workaround")
+        self.debugGpuGWTemplateAction = QAction(t("act.a.d.glitch"))
         self.debugGpuGWTemplateAction.triggered.connect(
             lambda: self.launch(exe="blender_debug_gpu_glitchworkaround.cmd")
         )
@@ -305,7 +275,7 @@ class LibraryWidget(BaseBuildWidget):
         self.menu.addMenu(self.debugMenu)
 
         if self.parent_widget is not None:
-            self.renameBranchAction = QAction("Rename Branch")
+            self.renameBranchAction = QAction(t("act.a.rename"))
             self.renameBranchAction.triggered.connect(self.rename_branch)
             self.menu.addAction(self.renameBranchAction)
 
@@ -327,13 +297,14 @@ class LibraryWidget(BaseBuildWidget):
         else:
             exp = re.compile(r"D\d{5}")
             if exp.search(self.build_info.branch):
-                self.showReleaseNotesAction.setText("Show Patch Details")
+                self.showReleaseNotesAction.setText(t("act.a.release_notes_patch"))
                 self.menu.addAction(self.showReleaseNotesAction)
             else:
                 exp = re.compile(r"pr\d+", flags=re.IGNORECASE)
                 if exp.search(self.build_info.branch):
-                    self.showReleaseNotesAction.setText("Show PR Details")
+                    self.showReleaseNotesAction.setText(t("act.a.release_notes_pr"))
                     self.menu.addAction(self.showReleaseNotesAction)
+                    self.menu.addAction(self.fetchPrNameAction)
 
         self.menu.addAction(self.showBuildFolderAction)
         self.menu.addAction(self.showConfigFolderAction)
@@ -345,29 +316,29 @@ class LibraryWidget(BaseBuildWidget):
         if self.show_new:
             self.build_state_widget.setNewBuild(True)
 
-            if get_mark_as_favorite() == 0:
-                pass
-            elif get_mark_as_favorite() == 1 and self.branch == "stable":
-                self.add_to_quick_launch()
-            elif get_mark_as_favorite() == 2 and self.branch == "daily":
-                self.add_to_quick_launch()
-            elif get_mark_as_favorite() == 3:
-                self.add_to_quick_launch()
-        elif get_favorite_path() == self.link.as_posix():
-            self.add_to_quick_launch()
-
         self.setEnabled(True)
         self.list_widget.sortItems()
 
         if self.build_info.is_favorite and self.parent_widget is None:
             self.add_to_favorites()
 
-        self.initialized.emit()
+    def is_quick_launch(self):
+        if not self.show_new:
+            return False
+        if get_favorite_path() == self.link.as_posix():
+            return True
+
+        return [
+            False,
+            self.branch == "stable",
+            self.branch == "daily",
+            "PR" in self.branch or "D" in self.branch,
+            self.branch == "bforartists",
+            self.branch == "upbge-stable",
+            self.branch == "upbge-stable",
+        ][get_mark_as_favorite()]
 
     def context_menu(self):
-        if self.is_damaged:
-            return
-
         self.update_delete_action(self.hovering_and_shifting)
         self.update_config_action(self.hovering_and_shifting)
 
@@ -389,21 +360,21 @@ class LibraryWidget(BaseBuildWidget):
         delete_from_drive = not reverted_behavior if shifting else reverted_behavior
 
         if delete_from_drive:
-            self.deleteAction.setText("Delete from Drive")
+            self.deleteAction.setText(t("act.a.delete"))
         else:
-            self.deleteAction.setText("Send to Trash")
+            self.deleteAction.setText(t("act.a.trash"))
 
     @Slot(bool)
     def update_config_action(self, shifting: bool):
         config_path = self.make_portable_path()
 
         if config_path.is_dir() and not shifting:
-            self.showConfigFolderAction.setText("Show Portable Config Folder")
+            self.showConfigFolderAction.setText(t("act.a.config_portable"))
         else:
-            self.showConfigFolderAction.setText("Show Config Folder")
+            self.showConfigFolderAction.setText(t("act.a.config"))
 
     def mouseDoubleClickEvent(self, _event):
-        if self.build_info is not None and self.hovering_and_shifting:
+        if self.hovering_and_shifting:
             self.launch(launch_mode=LaunchOpenLast())
 
     def mouseReleaseEvent(self, event):
@@ -454,22 +425,22 @@ class LibraryWidget(BaseBuildWidget):
     def eventFilter(self, obj, event):
         # For detecting SHIFT
         if isinstance(event, QHoverEvent):
-            if self._hovered and event.modifiers() & Qt.ShiftModifier:
+            if self._hovered and event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
                 self.hovering_and_shifting = True
             else:
                 self.hovering_and_shifting = False
         return super().eventFilter(obj, event)
 
     def _shift_hovering(self):
-        self.launchButton.set_text("  Previous")
+        self.launchButton.set_text(t("act.lprev"))
         self._launch_icon = self.launchButton.icon()
-        self.launchButton.setIcon(self.parent.icons.file)
-        self.launchButton.setFont(self.parent.font_8)
+        self.launchButton.setIcon(self.launcher.icons.file)
+        self.launchButton.setFont(Fonts.get().font_8)
 
     def _stopped_shift_hovering(self):
-        self.launchButton.set_text("Launch")
-        self.launchButton.setIcon(self._launch_icon or self.parent.icons.none)
-        self.launchButton.setFont(self.parent.font_10)
+        self.launchButton.set_text(t("act.launch"))
+        self.launchButton.setIcon(self._launch_icon or self.launcher.icons.none)
+        self.launchButton.setFont(Fonts.get().font_10)
 
     def enterEvent(self, _e):
         self._hovered = True
@@ -491,22 +462,21 @@ class LibraryWidget(BaseBuildWidget):
             self._stopped_shift_hovering()
 
     def install_template(self):
-        self.launchButton.set_text("Updating")
+        self.launchButton.set_text(t("act.updating"))
         self.launchButton.setEnabled(False)
         self.deleteAction.setEnabled(False)
         self.installTemplateAction.setEnabled(False)
         a = TemplateTask(self.link)
         a.finished.connect(self.install_template_finished)
-        self.parent.task_queue.append(a)
+        self.launcher.task_queue.append(a)
 
     def install_template_finished(self):
-        self.launchButton.set_text("Launch")
+        self.launchButton.set_text(t("act.launch"))
         self.launchButton.setEnabled(True)
         self.deleteAction.setEnabled(True)
         self.installTemplateAction.setEnabled(True)
 
     def launch(self, update_selection=False, exe=None, launch_mode: LaunchMode | None = None):
-        assert self.build_info is not None
         if update_selection is True:
             self.list_widget.clearSelection()
             self.item.setSelected(True)
@@ -533,12 +503,13 @@ class LibraryWidget(BaseBuildWidget):
 
     def update_finished(self):
         """Reset the widget state after update completion."""
-        self.launchButton.set_text("Launch")
+        self.launchButton.set_text(t("act.launch"))
         self.launchButton.setEnabled(True)
         if hasattr(self, "_update_download_widget"):
             delattr(self, "_update_download_widget")
+        logger.debug(f"Update finished for {self.link.name}")
 
-    def _show_update_button(self):
+    def show_update_button(self):
         """Show update button and adjust layout."""
         self.updateButton.show()
         self.launchButton.setFixedWidth(70)
@@ -550,12 +521,6 @@ class LibraryWidget(BaseBuildWidget):
         self.updateBlenderBuildAction.setVisible(False)
 
     def check_for_updates(self, available_downloads):
-        # Skip update check if build_info is not available
-        if self.build_info is None:
-            logger.warning(f"Skipping update check for {self.link}: build_info is None")
-            self._hide_update_button()
-            return False
-
         logger.debug(
             f"Checking for updates for {self.build_info.semversion.replace(prerelease=None)} in {self.build_info.branch} branch."
         )
@@ -568,7 +533,7 @@ class LibraryWidget(BaseBuildWidget):
         update = available_blender_update(self.build_info, available_downloads, self.list_widget.items())
         if update:
             if get_show_update_button():
-                self._show_update_button()
+                self.show_update_button()
                 self.updateBlenderBuildAction.setVisible(True)
             else:
                 self._hide_update_button()
@@ -580,20 +545,65 @@ class LibraryWidget(BaseBuildWidget):
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore", RuntimeWarning)
                 self.updateButton.clicked.disconnect()
-            self.updateButton.clicked.connect(self._trigger_update_download)
+            self.updateButton.clicked.connect(self.trigger_update_download)
             return True
 
         self._hide_update_button()
         return False
 
-    def _trigger_update_download(self):
+    def trigger_update_download(self):
         if hasattr(self, "_update_download_widget"):
             self._is_major_version_update = is_major_version_update(self.build_info, self._update_download_widget)
         else:
             self._is_major_version_update = False
 
+        config_path = self.make_portable_path()
+        if config_path.is_dir():
+            self._show_portable_settings_dialog()
+        else:
+            self._proceed_with_update()
+
+    def _show_portable_settings_dialog(self):
+        """Show dialog asking what to do with portable settings."""
+
+        self._portable_popup = Popup.Window(
+            popup_type=Popup.Type.Setup,
+            icon=Popup.Icon.WARNING,
+            message=t("msg.popup.update_portable_settings"),
+            buttons=[Popup.Button.MOVE_TO_NEW, Popup.Button.REMOVE, Popup.Button.CANCEL],
+            parent=self.launcher,
+        )
+
+        self._portable_popup.custom_signal.connect(self._handle_portable_choice)
+
+    def _handle_portable_choice(self, choice: Popup.Button):
+        """Handle the user's choice for portable settings."""
+        if choice == Popup.Button.MOVE_TO_NEW:
+            self.move_portable_settings = True
+            self._proceed_with_update()
+        elif choice == Popup.Button.REMOVE:
+            self._proceed_with_update()
+        else:  # Cancel
+            # Reset the UI state
+            self.launchButton.set_text(t("act.launch"))
+            self.launchButton.setEnabled(True)
+            if hasattr(self, "_update_download_widget") and get_show_update_button():
+                self.show_update_button()
+
+    def _proceed_with_update(self):
+        """Proceed with the actual update download."""
+        if (
+            hasattr(self, "_update_download_widget") and self._update_download_widget.is_working()
+        ):  # != DownloadState.IDLE
+            version = self._update_download_widget.build_info.subversion
+            Popup.info(
+                message=t("msg.popup.update_already_in_progress", version=version),
+                parent=self.launcher,
+            )
+            return
+
         self._hide_update_button()
-        self.launchButton.set_text("Updating")
+        self.launchButton.set_text(t("act.updating"))
         self.launchButton.setEnabled(False)
 
         if hasattr(self, "_update_download_widget"):
@@ -615,17 +625,10 @@ class LibraryWidget(BaseBuildWidget):
             current_version = self.build_info.semversion.replace(prerelease=None)
             update_version = update_download_widget.build_info.semversion.replace(prerelease=None)
 
-            message = (
-                f"Updating from {current_version} to {update_version} will use a new set of Blender Preferences\n\n"
-                f"Do you want to remove the old build ({current_version}) from your library?"
-            )
-
-            self._confirmation_popup = PopupWindow(
-                message=message,
-                title="Major Version Update - Remove Old Build",
-                icon=PopupIcon.WARNING,
-                buttons=["Remove", "Keep Both Versions"],
-                parent=self.parent,
+            self._confirmation_popup = Popup.warning(
+                message=t("msg.popup.major_version_update", current=current_version, update=update_version),
+                buttons=[Popup.Button.REMOVE, Popup.Button.KEEP_BOTH_VERSIONS],
+                parent=self.launcher,
             )
 
             self._confirmation_popup.accepted.connect(lambda: self._handle_removal_confirmation(callback, True))
@@ -646,6 +649,12 @@ class LibraryWidget(BaseBuildWidget):
         self.deleteAction.setEnabled(False)
         self.installTemplateAction.setEnabled(False)
 
+        action = get_on_blender_launch_action()
+        if action == 1:
+            self.launcher.showMinimized()
+        elif action == 2:
+            self.launcher.close()
+
         if self.child_widget is not None:
             self.child_widget.observer_started()
 
@@ -662,24 +671,31 @@ class LibraryWidget(BaseBuildWidget):
     def make_portable(self):
         config_path = self.make_portable_path()
         folder_name = config_path.name
-
         _config_path = config_path.parent / ("_" + folder_name)
+
         if config_path.is_dir():
-            config_path.rename(_config_path)
-            self.makePortableAction.setText("Make Portable")
-            self.showConfigFolderAction.setText("Show Config Folder")
+            retry_on_permission_error(config_path.rename, _config_path)
+            self.makePortableAction.setText(t("act.a.port.add"))
+            self.showConfigFolderAction.setText(t("act.a.config"))
         else:
             if _config_path.is_dir():
-                _config_path.rename(config_path)
+                retry_on_permission_error(_config_path.rename, config_path)
             else:
                 config_path.mkdir(parents=False, exist_ok=True)
-            self.makePortableAction.setText("Unmake Portable")
-            self.showConfigFolderAction.setText("Show Portable Config Folder")
+            self.makePortableAction.setText(t("act.a.port.rem"))
+            self.showConfigFolderAction.setText(t("act.a.config_portable"))
 
-    def make_portable_path(self):
+    def make_portable_path(self) -> Path:
         version = self.build_info.subversion.rsplit(".", 1)[0]
+        branch = self.build_info.branch
 
-        if version >= "4.2":
+        if branch == "bforartists" and version >= "4.1":
+            folder_name = "portable"
+            config_path = self.link / folder_name
+        elif "upbge" in branch and version >= "0.42":
+            folder_name = "portable"
+            config_path = self.link / folder_name
+        elif version >= "4.2":
             folder_name = "portable"
             config_path = self.link / folder_name
         else:
@@ -690,16 +706,22 @@ class LibraryWidget(BaseBuildWidget):
 
     @Slot()
     def copy_build_hash(self):
+        if self.build_info.build_hash is None:
+            error_msg = t("msg.err.no_hash")
+            logger.error(error_msg)
+            self.launcher.show_message(error_msg, message_type=MessageType.ERROR)
+            return
+
         QApplication.clipboard().setText(self.build_info.build_hash)
 
     @Slot()
     def freeze_update(self):
         if self.build_info.is_frozen:
             self.build_info.is_frozen = False
-            self.freezeUpdate.setText("Freeze Update")
+            self.freezeUpdate.setText(t("act.a.freeze.add"))
         else:
             self.build_info.is_frozen = True
-            self.freezeUpdate.setText("Unfreeze Update")
+            self.freezeUpdate.setText(t("act.a.freeze.rem"))
             self._hide_update_button()
 
         self.write_build_info()
@@ -721,6 +743,10 @@ class LibraryWidget(BaseBuildWidget):
             self.branchLabel.set_text(name)
             self.build_info.custom_name = name
             self.write_build_info()
+        else:
+            error_msg = t("msg.err.rename_branch")
+            logger.error(error_msg)
+            self.launcher.show_message(error_msg, message_type=MessageType.ERROR)
 
         self.branchLabel.show()
 
@@ -729,14 +755,38 @@ class LibraryWidget(BaseBuildWidget):
         self.lineEdit.hide()
         self.branchLabel.show()
 
+    @Slot()
+    def fetch_pr_name(self):
+        # Assuming this can only be run when self is a pr build
+        from threads.scraping.pr_labels import FetchPrTask
+
+        m = re.search(r"pr(\d+)", self.build_info.branch, re.IGNORECASE)
+        if m is None:
+            return
+        num = m.group(1)
+
+        fetcher = FetchPrTask(int(num), self.launcher.cm)
+
+        if get_prepend_prnum_on_prlabel():
+            fetcher.finished.connect(lambda label: self.rename(f"{num}: {label}"))
+        else:
+            fetcher.finished.connect(self.rename)
+
+        self.launcher.task_queue.append(fetcher)
+
+    def rename(self, custom_name: str):
+        self.build_info.custom_name = custom_name
+        self.branchLabel.set_text(self.build_info.display_label)
+        self.branchLabel.setElidedText()
+        self.write_build_info()
+
     def write_build_info(self):
-        assert self.build_info is not None
         self.build_info_writer = WriteBuildTask(
             self.link,
             self.build_info,
         )
         self.build_info_writer.written.connect(self.build_info_writer_finished)
-        self.parent.task_queue.append(self.build_info_writer)
+        self.launcher.task_queue.append(self.build_info_writer)
 
     def build_info_writer_finished(self):
         self.build_info_writer = None
@@ -753,16 +803,15 @@ class LibraryWidget(BaseBuildWidget):
             return
 
         self.item.setSelected(True)
-        self.dlg = PopupWindow(
-            parent=self.parent,
-            title="Warning",
-            message="Are you sure you want to<br> \
-                  delete selected builds?",
-            icon=PopupIcon.NONE,
-            buttons=["Yes", "No"],
+
+        count = len(self.list_widget.selectedItems())
+        self.dlg = Popup.warning(
+            message=t("msg.popup.ask_remove_from_drive", count=count),
+            buttons=Popup.Button.yn(),
+            parent=self.launcher,
         )
 
-        if len(self.list_widget.selectedItems()) > 1:
+        if count > 1:
             self.dlg.accepted.connect(self.remove_from_drive_extended)
         else:
             self.dlg.accepted.connect(self.remove_from_drive)
@@ -770,7 +819,9 @@ class LibraryWidget(BaseBuildWidget):
     @Slot()
     def remove_from_drive_extended(self):
         for item in self.list_widget.selectedItems():
-            self.list_widget.itemWidget(item).remove_from_drive()
+            widget = self.list_widget.itemWidget(item)
+            if widget is not None and isinstance(widget, LibraryWidget):
+                widget.remove_from_drive()
 
     @Slot()
     def remove_from_drive(self, trash=False):
@@ -781,19 +832,17 @@ class LibraryWidget(BaseBuildWidget):
         path = get_library_folder() / self.link
         a = RemovalTask(path, trash=trash)
         a.finished.connect(self.remover_completed)
-        self.parent.task_queue.append(a)
+        self.launcher.task_queue.append(a)
         self.remover_started()
 
     @Slot()
     def ask_send_to_trash(self):
         self.item.setSelected(True)
-        self.dlg = PopupWindow(
-            parent=self.parent,
-            title="Warning",
-            message="Are you sure you want to<br> \
-                  send selected builds to trash?",
-            icon=PopupIcon.NONE,
-            buttons=["Yes", "No"],
+        count = len(self.list_widget.selectedItems())
+        self.dlg = Popup.warning(
+            message=t("msg.popup.ask_send_to_trash", count=count),
+            buttons=Popup.Button.yn(),
+            parent=self.launcher,
         )
 
         if len(self.list_widget.selectedItems()) > 1:
@@ -804,7 +853,9 @@ class LibraryWidget(BaseBuildWidget):
     @Slot()
     def send_to_trash_extended(self):
         for item in self.list_widget.selectedItems():
-            self.list_widget.itemWidget(item).remove_from_drive(trash=True)
+            widget = self.list_widget.itemWidget(item)
+            if widget is not None and isinstance(widget, LibraryWidget):
+                widget.remove_from_drive(trash=True)
 
     @Slot()
     def send_to_trash(self):
@@ -812,9 +863,9 @@ class LibraryWidget(BaseBuildWidget):
 
     # TODO Clear icon if build in quick launch
     def remover_started(self):
-        self.launchButton.set_text("Deleting")
+        self.launchButton.set_text(t("act.deleting"))
         self.setEnabled(False)
-        self.item.setFlags(self.item.flags() & ~Qt.ItemIsSelectable)
+        self.item.setFlags(self.item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
 
         if self.child_widget is not None:
             self.child_widget.remover_started()
@@ -826,78 +877,71 @@ class LibraryWidget(BaseBuildWidget):
         if code == 0:
             self.list_widget.remove_item(self.item)
 
-            if self.parent_widget is None:
-                self.parent.draw_from_cashed(self.build_info)
-
             return
         # TODO Child synchronization and reverting selection flags
-        self.launchButton.set_text("Launch")
+        self.launchButton.set_text(t("act.launch"))
         self.setEnabled(True)
         return
 
     @Slot()
     def edit_build(self):
-        assert self.build_info is not None
-        dlg = CustomBuildDialogWindow(self.parent, Path(self.build_info.link), self.build_info)
+        dlg = CustomBuildDialogWindow(self.launcher, Path(self.build_info.link), self.build_info)
         dlg.accepted.connect(self.build_info_edited)
 
     @Slot(BuildInfo)
     def build_info_edited(self, blinfo: BuildInfo):
         self.list_widget.remove_item(self.item)
         blinfo.write_to(Path(blinfo.link))
-        self.parent.draw_to_library(Path(blinfo.link), show_new=True)
+        self.launcher.draw_to_library(Path(blinfo.link), show_new=True)
 
     @Slot()
     def add_to_quick_launch(self):
-        if (self.parent.favorite is not None) and (self.parent.favorite.link != self.link):
-            self.parent.favorite.remove_from_quick_launch()
+        self.add_as_quick_launch.emit(self)
 
-        set_favorite_path(self.link.as_posix())
-        self.parent.favorite = self
+        self.launchButton.setIcon(self.launcher.icons.quick_launch)
 
-        self.launchButton.setIcon(self.parent.icons.quick_launch)
         self.addToQuickLaunchAction.setEnabled(False)
 
         # TODO Make more optimal and simpler synchronization
         if self.parent_widget is not None:
-            self.parent_widget.launchButton.setIcon(self.parent.icons.quick_launch)
+            self.parent_widget.launchButton.setIcon(self.launcher.icons.quick_launch)
             self.parent_widget.addToQuickLaunchAction.setEnabled(False)
 
         if self.child_widget is not None:
-            self.child_widget.launchButton.setIcon(self.parent.icons.quick_launch)
+            self.child_widget.launchButton.setIcon(self.launcher.icons.quick_launch)
             self.child_widget.addToQuickLaunchAction.setEnabled(False)
 
     @Slot()
     def remove_from_quick_launch(self):
-        self.launchButton.setIcon(self.parent.icons.fake)
+        self.launchButton.setIcon(self.launcher.icons.fake)
         self.addToQuickLaunchAction.setEnabled(True)
 
         # TODO Make more optimal and simpler synchronization
         if self.parent_widget is not None:
-            self.parent_widget.launchButton.setIcon(self.parent.icons.fake)
+            self.parent_widget.launchButton.setIcon(self.launcher.icons.fake)
             self.parent_widget.addToQuickLaunchAction.setEnabled(True)
 
         if self.child_widget is not None:
-            self.child_widget.launchButton.setIcon(self.parent.icons.fake)
+            self.child_widget.launchButton.setIcon(self.launcher.icons.fake)
             self.child_widget.addToQuickLaunchAction.setEnabled(True)
 
     @Slot()
     def add_to_favorites(self):
         item = BaseListWidgetItem()
         widget = LibraryWidget(
-            self.parent,
+            self.launcher,
             item,
             self.link,
-            self.parent.UserFavoritesListWidget,
+            self.launcher.FavoritesPage.list_widget,
+            build_info=self.build_info,
             parent_widget=self,
         )
-        if not self.parent.UserFavoritesListWidget.contains_build_info(self.build_info):
-            self.parent.UserFavoritesListWidget.insert_item(item, widget)
+        if not self.launcher.FavoritesPage.list_widget.contains_build_info(self.build_info):
+            self.launcher.FavoritesPage.list_widget.insert_item(item, widget)
         self.child_widget = widget
 
         self.removeFromFavoritesAction.setVisible(True)
         self.addToFavoritesAction.setVisible(False)
-        assert self.build_info is not None
         if self.build_info.is_favorite is False:
             self.build_info.is_favorite = True
             self.write_build_info()
@@ -906,16 +950,15 @@ class LibraryWidget(BaseBuildWidget):
     def remove_from_favorites(self):
         widget = self.parent_widget or self
         assert widget.child_widget is not None
-        self.parent.UserFavoritesListWidget.remove_item(widget.child_widget.item)
+        self.launcher.FavoritesPage.list_widget.remove_item(widget.child_widget.item)
 
         widget.child_widget = None
         widget.removeFromFavoritesAction.setVisible(False)
         widget.addToFavoritesAction.setVisible(True)
 
-        assert self.build_info is not None
         self.build_info.is_favorite = False
         self.build_info_writer = WriteBuildTask(self.link, self.build_info)
-        self.parent.task_queue.append(self.build_info_writer)
+        self.launcher.task_queue.append(self.build_info_writer)
 
     @Slot()
     def register_extension(self):
@@ -925,7 +968,6 @@ class LibraryWidget(BaseBuildWidget):
 
     @Slot()
     def create_shortcut(self):
-        assert self.build_info is not None
         name = "Blender {} {}".format(
             self.build_info.subversion.replace("(", "").replace(")", ""),
             self.build_info.branch.replace("-", " ").title(),
@@ -933,7 +975,7 @@ class LibraryWidget(BaseBuildWidget):
 
         destination = get_default_shortcut_destination(name)
         file_place = FileDialogWindow().get_save_filename(
-            parent=self, title="Choose destination", directory=str(destination)
+            parent=self, title=t("msg.popup.dest"), directory=str(destination)
         )
         if file_place[0]:
             generate_blender_shortcut(self.link, name, Path(file_place[0]))
@@ -966,10 +1008,15 @@ class LibraryWidget(BaseBuildWidget):
             logger.error(f"Path {folder_path} do not exist.")
             return
 
+        if QDesktopServices.openUrl(QUrl.fromLocalFile(folder_path.as_posix())):
+            return
+
         platform = get_platform()
 
-        if platform == "Windows":
+        if sys.platform == "win32":
             os.startfile(folder_path.as_posix())
+        elif platform == "macOS":
+            subprocess.call(["open", folder_path.as_posix()])
         elif platform == "Linux":
             # Due to a bug/feature in Pyinstaller, we
             # have to remove all environment variables
@@ -1013,38 +1060,63 @@ class LibraryWidget(BaseBuildWidget):
             self.show_folder(config_path)
             return
 
-        if self.build_info is None:
-            PopupWindow(
-                title="Warning",
-                info_popup=True,
-                message="No build information found.",
-                icon=PopupIcon.WARNING,
-                parent=self.parent,
-            ).show()
-            return
         version = self.build_info.semversion
         branch = self.build_info.branch
         custom_folder = None
+        custom_subfolder = None
 
-        if branch == "bforartists":
-            custom_folder = "bforartists"
-            version = self.build_info.bforartist_version_matcher
+        fork_config = get_fork_config_paths(branch)
+        if fork_config is not None:
+            custom_folder = fork_config["config_folder"]
+            subfolder_config = fork_config["config_subfolder"]
+
+            # Handle platform-specific subfolder
+            if isinstance(subfolder_config, dict):
+                platform = get_platform()
+                custom_subfolder = subfolder_config.get(platform)
+            else:
+                custom_subfolder = subfolder_config
+
+            # Get version from version matcher
+            if branch == "bforartists":
+                version = self.build_info.bforartist_version_matcher
+            elif branch.startswith("upbge"):
+                version = self.build_info.upbge_version_matcher
 
         if version is None:
             version_str = ""
         else:
             version_str = f"{version.major}.{version.minor}"
 
-        path = Path(get_blender_config_folder(custom_folder) / version_str)
-        general_path = Path(get_blender_config_folder(custom_folder))
+        kwargs = {
+            k: v
+            for k, v in {
+                "config_folder_name": custom_folder,
+                "config_subfolder_name": custom_subfolder,
+            }.items()
+            if v is not None
+        }
+
+        base_config_path = get_blender_config_folder(**kwargs)
+
+        if base_config_path is None:
+            logger.error("Unable to determine base configuration path.")
+            Popup.error(
+                message=t("msg.err.no_base_config"),
+                buttons=Popup.Button.info(),
+                parent=self.launcher,
+            )
+            return
+
+        path = base_config_path / version_str
+        general_path = base_config_path
 
         if not path.is_dir():
-            popup = PopupWindow(
-                title="Warning",
-                message="No config folder found for this version.",
-                buttons=["Open General Config Folder", "Cancel"],
-                icon=PopupIcon.WARNING,
-                parent=self.parent,
+            logger.warning(f"Config folder {path} do not exist.")
+            popup = Popup.warning(
+                message=t("msg.err.no_config_version"),
+                buttons=[Popup.Button.GENERAL_FOLDER, Popup.Button.CANCEL],
+                parent=self.launcher,
             )
             popup.accepted.connect(lambda: self.show_folder(general_path))
             popup.show()
@@ -1053,5 +1125,13 @@ class LibraryWidget(BaseBuildWidget):
         self.show_folder(path)
 
     def _destroyed(self):
-        if self.parent.favorite == self:
-            self.parent.favorite = None
+        if self.launcher.quick_launch_handler.quick_launch_build == self:
+            self.launcher.quick_launch_handler.remove_quick_launch()
+
+    @Slot(int, int, int)
+    def _update_column_widths(self, version_width: int, _branch_width: int, commit_time_width: int):
+        """Update column widths to match header splitter."""
+        if not hasattr(self, "subversionLabel") or self.subversionLabel is None:
+            return
+        self.subversionLabel.setFixedWidth(version_width)
+        self.commitTimeLabel.setFixedWidth(commit_time_width)

@@ -1,21 +1,35 @@
-from __future__ import annotations
-
 import contextlib
+import json
+import logging
 import os
 import shutil
 import sys
 import uuid
-from datetime import datetime, timezone
+from collections.abc import Callable, Iterable
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import TypeVar
 
-from modules._platform import get_config_file, get_config_path, get_cwd, get_platform, local_config, user_config
+import keyring
+from keyring.errors import KeyringError, PasswordDeleteError
 from modules.bl_api_manager import dropdown_blender_version
+from modules.platform_utils import get_config_file, get_config_path, get_cwd, local_config, user_config
 from modules.version_matcher import VersionSearchQuery
 from PySide6.QtCore import QSettings
 from semver import Version
 
-EPOCH = datetime.fromtimestamp(0, tz=timezone.utc)
+logger = logging.getLogger(__name__)
+
+EPOCH = datetime.fromtimestamp(0, tz=UTC)
 ISO_EPOCH = EPOCH.isoformat()
+
+# Keyring constants for secure token storage
+KEYRING_SERVICE_NAME = "BlenderLauncher"
+KEYRING_PROXY_HOST = "proxy/host"
+KEYRING_PROXY_PORT = "proxy/port"
+KEYRING_PROXY_USER = "proxy/user"
+KEYRING_PROXY_PASSWORD = "proxy/password"
+KEYRING_TOKEN_USERNAME = "github_token"
 
 # TODO: Simplify this
 
@@ -26,34 +40,47 @@ tabs = {
 }
 
 library_pages = {
-    "Stable Releases": 0,
-    "Daily Builds": 1,
-    "Experimental Branches": 2,
-    "Bforartists": 3,
-    "Custom": 4,
+    # "All": "all",
+    "Stable Releases": "stable",
+    "Daily Builds": "daily",
+    "Experimental Branches": "experimental",
+    "Bforartists": "bforartists",
+    "UPBGE": "upbge-stable",
+    "UPBGE Weekly": "upbge-weekly",
+    "Custom": "custom",
 }
 
 downloads_pages = {
-    "Stable Releases": 0,
-    "Daily Builds": 1,
-    "Experimental Branches": 2,
-    "Bforartists": 3,
+    # "All": "all",
+    "Stable Releases": "stable",
+    "Daily Builds": "daily",
+    "Experimental Branches": "experimental",
+    "Bforartists": "bforartists",
+    "UPBGE": "upbge-stable",
+    "UPBGE Weekly": "upbge-weekly",
 }
 
 favorite_pages = {
-    "Disable": 0,
-    "Stable Releases": 1,
-    "Daily Builds": 2,
-    "Experimental Branches": 3,
-}
+    "Disable": "disable",
+} | downloads_pages
 
-library_subfolders = [
-    "custom",
+
+build_library_folders = [
     "stable",
     "daily",
     "experimental",
+    "bforartists",
+    "upbge-stable",
+    "upbge-weekly",
+    "custom",
+]
+
+other_library_folders = [
     "template",
 ]
+
+
+library_subfolders = build_library_folders + other_library_folders
 
 proxy_types = {
     "None": 0,
@@ -81,6 +108,37 @@ def get_settings() -> QSettings:
         file.parent.mkdir(parents=True)
 
     return QSettings(get_config_file().as_posix(), QSettings.Format.IniFormat)
+
+
+_R = TypeVar("_R")
+
+
+def dropdown_setting(
+    name: str,
+    iterable: Iterable[_R],
+    default=0,
+) -> tuple[Callable[[], int], Callable[[int], None]]:
+    """
+    Uses in Iterable[settings name] to form index-based getters and setters
+    """
+    gindex: dict[_R, int] = {}
+    sindex: dict[int, _R] = {}
+    for idx, v in enumerate(iterable):
+        gindex[v] = idx
+        sindex[idx] = v
+
+    def get_() -> int:
+        v = get_settings().value(name)
+        if v is None:
+            return default
+        if isinstance(v, int) or v.isdigit():
+            return int(v)  # backcompat
+        return gindex[v]
+
+    def set_(x: int) -> None:
+        get_settings().setValue(name, sindex[x])
+
+    return get_, set_
 
 
 def get_actual_library_folder_no_fallback() -> Path | None:
@@ -149,7 +207,7 @@ def create_library_folders(library_folder):
 
 
 def get_favorite_path() -> str | None:
-    return get_settings().value("Internal/favorite_path")  # type: ignore
+    return get_settings().value("Internal/favorite_path")
 
 
 def set_favorite_path(path):
@@ -221,12 +279,20 @@ def set_launch_minimized_to_tray(is_checked):
     get_settings().setValue("launch_minimized_to_tray", is_checked)
 
 
-def get_enable_high_dpi_scaling() -> bool:
-    return get_settings().value("enable_high_dpi_scaling", defaultValue=True, type=bool)  # type: ignore
+def get_on_blender_launch_action() -> int:
+    return get_settings().value("on_blender_launch_action", defaultValue=0, type=int)  # type: ignore
 
 
-def set_enable_high_dpi_scaling(is_checked):
-    get_settings().setValue("enable_high_dpi_scaling", is_checked)
+def set_on_blender_launch_action(action: int):
+    get_settings().setValue("on_blender_launch_action", action)
+
+
+def get_dpi_scale_factor() -> float:
+    return get_settings().value("dpi_scale_factor", defaultValue=1.0, type=float)  # type: ignore
+
+
+def set_dpi_scale_factor(val: float):
+    get_settings().setValue("dpi_scale_factor", val)
 
 
 def get_sync_library_and_downloads_pages() -> bool:
@@ -237,36 +303,15 @@ def set_sync_library_and_downloads_pages(is_checked):
     get_settings().setValue("sync_library_and_downloads_pages", is_checked)
 
 
-def get_default_library_page() -> int:
-    return get_settings().value("default_library_page", defaultValue=0, type=int)  # type: ignore
+get_default_library_page, set_default_library_page = dropdown_setting("default_library_page", library_pages.values())
 
+get_default_downloads_page, set_default_downloads_page = dropdown_setting(
+    "default_downloads_page", downloads_pages.values()
+)
 
-def set_default_library_page(page):
-    get_settings().setValue("default_library_page", library_pages[page])
+get_mark_as_favorite, set_mark_as_favorite = dropdown_setting("mark_as_favorite", favorite_pages.values())
 
-
-def get_mark_as_favorite() -> int:
-    return get_settings().value("mark_as_favorite", defaultValue=0, type=int)  # type: ignore
-
-
-def set_mark_as_favorite(page):
-    get_settings().setValue("mark_as_favorite", favorite_pages[page])
-
-
-def get_default_downloads_page() -> int:
-    return get_settings().value("default_downloads_page", defaultValue=0, type=int)  # type: ignore
-
-
-def set_default_downloads_page(page):
-    get_settings().setValue("default_downloads_page", downloads_pages[page])
-
-
-def get_default_tab() -> int:
-    return get_settings().value("default_tab", defaultValue=0, type=int)  # type: ignore
-
-
-def set_default_tab(tab):
-    get_settings().setValue("default_tab", tabs[tab])
+get_default_tab, set_default_tab = dropdown_setting("default_tab", tabs.values())
 
 
 def get_list_sorting_type(list_name) -> int:
@@ -291,6 +336,14 @@ def get_enable_download_notifications() -> bool:
 
 def set_enable_download_notifications(is_checked):
     get_settings().setValue("enable_download_notifications", is_checked)
+
+
+def get_language() -> str:
+    return get_settings().value("language", defaultValue="auto", type=str)  # type: ignore
+
+
+def set_language(lang: str):
+    get_settings().setValue("language", lang)
 
 
 def get_blender_startup_arguments() -> str:
@@ -359,44 +412,41 @@ def get_show_bfa_update_button() -> bool:
     return get_settings().value("show_bfa_update_button", defaultValue=True, type=bool)  # type: ignore
 
 
-def get_update_behavior() -> int:
-    return get_settings().value("update_behavior", defaultValue=2, type=int)  # type: ignore
+def set_show_upbge_stable_update_button(is_checked):
+    get_settings().setValue("show_upbge_stable_update_button", is_checked)
 
 
-def set_update_behavior(behavior):
-    get_settings().setValue("update_behavior", update_behavior[behavior])
+def get_show_upbge_stable_update_button() -> bool:
+    return get_settings().value("show_upbge_stable_update_button", defaultValue=True, type=bool)  # type: ignore
 
 
-def get_stable_update_behavior() -> int:
-    return get_settings().value("stable_update_behavior", defaultValue=2, type=int)  # type: ignore
+def set_show_upbge_weekly_update_button(is_checked):
+    get_settings().setValue("show_upbge_weekly_update_button", is_checked)
 
 
-def set_stable_update_behavior(behavior):
-    get_settings().setValue("stable_update_behavior", update_behavior[behavior])
+def get_show_upbge_weekly_update_button() -> bool:
+    return get_settings().value("show_upbge_weekly_update_button", defaultValue=True, type=bool)  # type: ignore
 
 
-def get_daily_update_behavior() -> int:
-    return get_settings().value("daily_update_behavior", defaultValue=2, type=int)  # type: ignore
-
-
-def set_daily_update_behavior(behavior):
-    get_settings().setValue("daily_update_behavior", update_behavior[behavior])
-
-
-def get_experimental_update_behavior() -> int:
-    return get_settings().value("experimental_update_behavior", defaultValue=2, type=int)  # type: ignore
-
-
-def set_experimental_update_behavior(behavior):
-    get_settings().setValue("experimental_update_behavior", update_behavior[behavior])
-
-
-def get_bfa_update_behavior() -> int:
-    return get_settings().value("bfa_update_behavior", defaultValue=2, type=int)  # type: ignore
-
-
-def set_bfa_update_behavior(behavior):
-    get_settings().setValue("bfa_update_behavior", update_behavior[behavior])
+get_update_behavior, set_update_behavior = dropdown_setting("update_behavior", update_behavior.values(), default=2)
+get_stable_update_behavior, set_stable_update_behavior = dropdown_setting(
+    "stable_update_behavior", update_behavior.values(), default=2
+)
+get_daily_update_behavior, set_daily_update_behavior = dropdown_setting(
+    "daily_update_behavior", update_behavior.values(), default=2
+)
+get_experimental_update_behavior, set_experimental_update_behavior = dropdown_setting(
+    "experimental_update_behavior", update_behavior.values(), default=2
+)
+get_bfa_update_behavior, set_bfa_update_behavior = dropdown_setting(
+    "bfa_update_behavior", update_behavior.values(), default=2
+)
+get_upbge_stable_update_behavior, set_upbge_stable_update_behavior = dropdown_setting(
+    "upbge_stable_update_behavior", update_behavior.values(), default=2
+)
+get_upbge_weekly_update_behavior, set_upbge_weekly_update_behavior = dropdown_setting(
+    "upbge_weekly_update_behavior", update_behavior.values(), default=2
+)
 
 
 def get_install_template() -> bool:
@@ -448,60 +498,39 @@ def set_enable_quick_launch_key_seq(is_checked):
     get_settings().setValue("enable_quick_launch_key_seq", is_checked)
 
 
-def get_proxy_type() -> int:
-    return get_settings().value("proxy/type", defaultValue=0, type=int)  # type: ignore
-
-
-def set_proxy_type(proxy_type):
-    get_settings().setValue("proxy/type", proxy_types[proxy_type])
+get_proxy_type, set_proxy_type = dropdown_setting("proxy/type", proxy_types.values(), default=0)
 
 
 def get_proxy_host() -> str:
-    host = get_settings().value("proxy/host")
-
-    if host is None:
-        return "255.255.255.255"
-    return host.strip()
+    return _get_keyring_value(KEYRING_PROXY_HOST, default="255.255.255.255")
 
 
 def set_proxy_host(args):
-    get_settings().setValue("proxy/host", args.strip())
+    return _set_keyring_value(KEYRING_PROXY_HOST, args.strip())
 
 
 def get_proxy_port() -> str:
-    port = get_settings().value("proxy/port")
-
-    if port is None:
-        return "9999"
-    return port.strip()
+    return _get_keyring_value(KEYRING_PROXY_PORT, default="9999")
 
 
 def set_proxy_port(args):
-    get_settings().setValue("proxy/port", args.strip())
+    return _set_keyring_value(KEYRING_PROXY_PORT, args.strip())
 
 
 def get_proxy_user() -> str:
-    user = get_settings().value("proxy/user")
-
-    if user is None:
-        return ""
-    return user.strip()
+    return _get_keyring_value(KEYRING_PROXY_USER)
 
 
 def set_proxy_user(args):
-    get_settings().setValue("proxy/user", args.strip())
+    return _set_keyring_value(KEYRING_PROXY_USER, args.strip())
 
 
 def get_proxy_password() -> str:
-    password = get_settings().value("proxy/password")
-
-    if password is None:
-        return ""
-    return password.strip()
+    return _get_keyring_value(KEYRING_PROXY_PASSWORD)
 
 
 def set_proxy_password(args):
-    get_settings().setValue("proxy/password", args.strip())
+    return _set_keyring_value(KEYRING_PROXY_PASSWORD, args.strip())
 
 
 def get_use_custom_tls_certificates() -> bool:
@@ -523,6 +552,81 @@ def get_user_id() -> str:
 
 def set_user_id(user_id):
     get_settings().setValue("user_id", user_id.strip())
+
+
+def get_github_token() -> str:
+    return _get_keyring_value(KEYRING_TOKEN_USERNAME)
+
+
+def set_github_token(token: str) -> bool:
+    return _set_keyring_value(KEYRING_TOKEN_USERNAME, token.strip())
+
+
+def _get_keyring_value(key: str, default="") -> str:
+    """
+    Get a value from secure system keyring.
+    Falls back to legacy QSettings storage if keyring fails.
+    """
+    try:
+        token = keyring.get_password(KEYRING_SERVICE_NAME, key)
+        if token:
+            return token.strip()
+    except KeyringError as e:
+        logger.warning(f"Failed to access keyring for key {key}: {e}")
+    except Exception as e:
+        logger.warning(f"Unexpected error accessing keyring: {e}")
+
+    # Fallback: check legacy QSettings storage and migrate if possible
+    legacy_value = get_settings().value(key)
+    if legacy_value and legacy_value.strip():
+        legacy_value = legacy_value.strip()
+        try:
+            keyring.set_password(KEYRING_SERVICE_NAME, key, legacy_value)
+            get_settings().remove(key)
+            logger.info(f"Migrated {key} from legacy storage to secure keyring")
+        except Exception as e:
+            logger.warning(f"Failed to migrate {key} to keyring: {e}")
+        return legacy_value
+
+    return default
+
+
+def _set_keyring_value(key: str, val: str) -> bool:
+    """
+    Stores key/value pair in secure system keyring.
+    Falls back to QSettings if keyring is unavailable.
+
+
+    Returns:
+        bool: True if stored in keyring successfully, False if fell back to QSettings use to trigger user warning.
+    """
+    settings = get_settings()
+    try:
+        if val:
+            # Store in secure keyring
+            keyring.set_password(KEYRING_SERVICE_NAME, key, val)
+            logger.debug(f"{key} stored in secure keyring")
+            # Remove from QSettings if it exists there
+            if settings.contains(key):
+                settings.remove(key)
+        else:
+            # Delete token from keyring if empty
+            try:
+                keyring.delete_password(KEYRING_SERVICE_NAME, key)
+                logger.debug(f"{key} removed from secure keyring")
+            except PasswordDeleteError:
+                pass  # Given key didn't exist, this is fine
+        return True
+    except KeyringError as e:
+        logger.warning(f"Keyring unavailable, falling back to QSettings: {e}")
+        # Fallback to QSettings
+        settings.setValue(key, val)
+    except Exception as e:
+        logger.error(f"Failed to store hidden settings: {e}")
+        # Fallback to QSettings
+        settings.setValue(key, val)
+
+    return False
 
 
 # Blender Build Tab
@@ -632,6 +736,22 @@ def set_scrape_bfa_builds(b: bool):
     get_settings().setValue("scrape_bfa_builds", b)
 
 
+def get_scrape_upbge_builds() -> bool:
+    return get_settings().value("scrape_upbge_builds", defaultValue=True, type=bool)  # type: ignore
+
+
+def set_scrape_upbge_builds(b: bool):
+    get_settings().setValue("scrape_upbge_builds", b)
+
+
+def get_scrape_upbge_weekly_builds() -> bool:
+    return get_settings().value("scrape_upbge_weekly_builds", defaultValue=False, type=bool)  # type: ignore
+
+
+def set_scrape_upbge_weekly_builds(b: bool):
+    get_settings().setValue("scrape_upbge_weekly_builds", b)
+
+
 def get_show_stable_builds() -> bool:
     return get_settings().value("show_stable_builds", defaultValue=True, type=bool)  # type: ignore
 
@@ -664,6 +784,22 @@ def set_show_bfa_builds(b: bool):
     get_settings().setValue("show_bfa_builds", b)
 
 
+def get_show_upbge_builds() -> bool:
+    return get_settings().value("show_upbge_builds", defaultValue=True, type=bool)  # type: ignore
+
+
+def set_show_upbge_builds(b: bool):
+    get_settings().setValue("show_upbge_builds", b)
+
+
+def get_show_upbge_weekly_builds() -> bool:
+    return get_settings().value("show_upbge_weekly_builds", defaultValue=False, type=bool)  # type: ignore
+
+
+def set_show_upbge_weekly_builds(b: bool):
+    get_settings().setValue("show_upbge_weekly_builds", b)
+
+
 def get_show_daily_archive_builds() -> bool:
     return get_settings().value("show_daily_archive_builds", defaultValue=False, type=bool)  # type: ignore
 
@@ -686,6 +822,22 @@ def get_show_patch_archive_builds() -> bool:
 
 def set_show_patch_archive_builds(b: bool):
     get_settings().setValue("show_patch_archive_builds", b)
+
+
+def get_fetch_pr_names_during_scrape() -> bool:
+    return get_settings().value("pr_names_fetch_during_scrape", defaultValue=False, type=bool)  # type: ignore
+
+
+def set_fetch_pr_names_during_scrape(b: bool):
+    get_settings().setValue("pr_names_fetch_during_scrape", b)
+
+
+def get_prepend_prnum_on_prlabel() -> bool:
+    return get_settings().value("prepend_pr_number_on_label", defaultValue=True, type=bool)  # type: ignore
+
+
+def set_prepend_prnum_on_prlabel(b: bool):
+    get_settings().setValue("prepend_pr_number_on_label", b)
 
 
 def get_make_error_popup() -> bool:
@@ -733,8 +885,6 @@ def set_use_system_titlebar(b: bool):
 
 
 def get_version_specific_queries() -> dict[Version, VersionSearchQuery]:
-    import json
-
     dct: str = get_settings().value("version_specific_queries", defaultValue="{}", type=str)  # type: ignore
     if dct is None:  # <-- unreachable?
         return {}
@@ -742,8 +892,6 @@ def get_version_specific_queries() -> dict[Version, VersionSearchQuery]:
 
 
 def set_version_specific_queries(dct: dict[Version, VersionSearchQuery]):
-    import json
-
     v = {str(k): str(v) for k, v in dct.items()}
     j = json.dumps(v)
     get_settings().setValue("version_specific_queries", j)
@@ -766,12 +914,7 @@ def set_first_time_setup_seen(b: bool):
     get_settings().setValue("first_time_setup_seen", b)
 
 
-def get_default_delete_action() -> int:
-    return get_settings().value("default_delete_action", defaultValue=0, type=int)  # type: ignore
-
-
-def set_default_delete_action(action):
-    get_settings().setValue("default_delete_action", delete_action[action])
+get_default_delete_action, set_default_delete_action = dropdown_setting("default_delete_action", delete_action.values())
 
 
 def migrate_config(force=False):
@@ -782,3 +925,56 @@ def migrate_config(force=False):
         if not config_path.is_dir():
             config_path.mkdir()
         shutil.move(old_config.resolve(), new_config.resolve())
+
+
+def get_column_widths() -> list[int]:
+    """Get saved column widths (global, shared across all lists)."""
+
+    # Use global key - all lists share the same column widths
+    value: str = get_settings().value("Internal/global_column_widths", defaultValue="[73, 434, 124]", type=str)  # type: ignore
+    try:
+        widths: list[int] = json.loads(value)
+        if isinstance(widths, list) and len(widths) == 3:
+            return widths
+    except json.JSONDecodeError:
+        pass
+    return [73, 434, 124]
+
+
+def set_column_widths(widths: list[int]):
+    """Save column widths (global, shared across all lists)."""
+
+    # Use global key - all lists share the same column widths
+    get_settings().setValue("Internal/global_column_widths", json.dumps(widths))
+
+
+def get_purge_temp_on_startup() -> bool:
+    return get_settings().value("purge_temp_on_startup", defaultValue=True, type=bool)  # type: ignore
+
+
+def set_purge_temp_on_startup(is_checked: bool):
+    get_settings().setValue("purge_temp_on_startup", is_checked)
+
+
+def get_auto_register_winget() -> bool:
+    return get_settings().value("auto_register_winget", defaultValue=True, type=bool)  # type: ignore
+
+
+def set_auto_register_winget(is_enabled: bool):
+    get_settings().setValue("auto_register_winget", is_enabled)
+
+
+def get_window_geometry() -> bytes | None:
+    return get_settings().value("Internal/window_geometry")  # type: ignore
+
+
+def set_window_geometry(geometry: bytes):
+    get_settings().setValue("Internal/window_geometry", geometry)
+
+
+def get_window_maximized() -> bool:
+    return get_settings().value("Internal/window_maximized", defaultValue=False, type=bool)  # type: ignore
+
+
+def set_window_maximized(maximized: bool):
+    get_settings().setValue("Internal/window_maximized", maximized)

@@ -3,16 +3,17 @@ from __future__ import annotations
 import json
 import logging
 import re
-import sys
 import shlex
+import sys
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import cache
 from pathlib import Path
+from typing import TypedDict
 
 import dateparser
-from modules._platform import _check_output, _popen, get_platform
 from modules.bl_api_manager import lts_blender_version, read_blender_version_list
+from modules.platform_utils import _check_output, _popen, get_platform
 from modules.settings import (
     get_bash_arguments,
     get_blender_startup_arguments,
@@ -26,22 +27,79 @@ from semver import Version
 logger = logging.getLogger()
 
 
+# Fork-specific configuration paths
+# Check the coc for more info:
+# https://victor-ix.github.io/Blender-Launcher-V2/implementing_new_fork/#10-handle-config-folders
+class ConfigFolder(TypedDict):
+    config_folder: str
+    config_subfolder: str | dict[str, str]
+
+
+FORK_CONFIG_PATHS: dict[str, ConfigFolder] = {
+    "bforartists": {
+        "config_folder": "bforartists",
+        "config_subfolder": "bforartists",
+    },
+    "upbge": {
+        "config_folder": "UPBGE",
+        "config_subfolder": {
+            "Windows": "Blender",
+            "Linux": "upbge",
+            "macOS": "UPBGE",
+        },
+    },
+}
+
+
+def get_fork_config_paths(branch: str) -> ConfigFolder | None:
+    """
+    Get config folder paths for a specific fork branch.
+
+    Args:
+        branch: The branch name (e.g., "upbge", "bforartists")
+
+    Returns:
+        Dictionary with 'config_folder' and 'config_subfolder' keys, or None if not a fork.
+        config_subfolder may be platform-specific (dict) or a single string.
+    """
+    for fork_branch, config in FORK_CONFIG_PATHS.items():
+        if branch.startswith(fork_branch):
+            return config
+    return None
+
+
 # TODO: Combine some of these
-matchers = tuple(
-    map(
-        re.compile,
-        (  #                                                                                   # format                                 examples
-            r"(?P<ma>\d+)\.(?P<mi>\d+)\.(?P<pa>\d+)[ \-](?P<pre>[^+]*[^wli][^ndux][^s]?)",  # <major>.<minor>.<patch> <Prerelease>   2.80.0 Alpha  -> 2.80.0-alpha
-            # r"(?P<ma>\d+)\.(?P<mi>\d+)\.(?P<pa>\d+)",  #                                       <major>.<minor>.<patch>                3.0.0         -> 3.0.0
-            r"(?P<ma>\d+)\.(?P<mi>\d+)[ \-](?P<pre>[^+]*[^wli][^ndux][^s]?)",
-            r"(?P<ma>\d+)\.(?P<mi>\d+) \(sub (?P<pa>\d+)\)",  #                                  <major>.<minor> (sub <patch>)          2.80 (sub 75) -> 2.80.75
-            r"(?P<ma>\d+)\.(?P<mi>\d+)$",  #                                                     <major>.<minor>                        2.79          -> 2.79.0
-            r"(?P<ma>\d+)\.(?P<mi>\d+)(?P<pre>[^-]{0,3})",  #                                    <major>.<minor><[chars]*(1-3)>         2.79rc1       -> 2.79.0-rc1
-            r"(?P<ma>\d+)\.(?P<mi>\d+)(?P<pre>\D[^\.\s]*)?",  #                                  <major>.<minor><patch?>                2.79          -> 2.79.0       | 2.79b -> 2.79.0-b
-        ),
-    )
-)
-initial_cleaner = re.compile(r"(?!blender-)\d.*(?=-linux|-windows)")
+
+patterns: list[str] = [
+    #                                                                                    format                                 examples
+    r"(?P<ma>\d+)\.(?P<mi>\d+)(?:\.(?P<pa>\d+))?[ \-](?P<pre>[^\+]*)",  #                <major>.<minor>.<patch> <Prerelease>   2.80.0 Alpha  -> 2.80.0-alpha
+    r"(?P<ma>\d+)\.(?P<mi>\d+) \(sub (?P<pa>\d+)\)",  #                                  <major>.<minor> (sub <patch>)          2.80 (sub 75) -> 2.80.75
+    r"(?P<ma>\d+)\.(?P<mi>\d+)$",  #                                                     <major>.<minor>                        2.79          -> 2.79.0
+    r"(?P<ma>\d+)\.(?P<mi>\d+)(?P<pre>[^-]{0,3})",  #                                    <major>.<minor><[chars]*(1-3)>         2.79rc1       -> 2.79.0-rc1
+    r"(?P<ma>\d+)\.(?P<mi>\d+)(?P<pre>\D[^\.\s]*)?",  #                                  <major>.<minor><patch?>                2.79          -> 2.79.0       | 2.79b -> 2.79.0-b
+]
+matchers = tuple(re.compile(p) for p in patterns)
+initial_cleaner = re.compile(r"(?:blender|v)-?(\d.*)", flags=re.IGNORECASE)
+
+
+@cache
+def simple_clean(s: str):
+    """
+    Cleans a version string by removing extraneous information like platform identifiers and "v" prefixes.
+    This function aims to standardize Blender version strings for easier comparison and handling.
+    """
+    captures = initial_cleaner.search(s)
+    if captures is not None:
+        grp = captures.group(1)
+        s = s[s.find(grp) :]
+
+    if (idx := s.find("-windows")) != -1:
+        s = s[:idx]
+
+    if (idx := s.find("-linux")) != -1:
+        s = s[:idx]
+
+    return s
 
 
 @cache
@@ -61,39 +119,34 @@ def parse_blender_ver(s: str, search=False) -> Version:
     try:
         return Version.parse(s)
     except ValueError as e:
-        m = initial_cleaner.search(s)
-        if m is not None:
-            s = m.group()
-            try:
-                return Version.parse(s)
-            except ValueError:
-                pass
+        s = simple_clean(s)
+        try:
+            return Version.parse(s)
+        except ValueError:
+            pass
 
         major = 0
         minor = 0
         patch = 0
         prerelease = None
 
-        try:
-            g = None
-            if search:
-                for matcher in matchers:
-                    if (m := matcher.search(s)) is not None:
-                        g = m
-                        break
-            else:
-                for matcher in matchers:
-                    if (m := matcher.match(s)) is not None:
-                        g = m
-                        break
-            assert g is not None
-        except (StopIteration, AssertionError):
-            """No matcher gave any valid version"""
+        g = None
+        if search:
+            for matcher in matchers:
+                if (m := matcher.search(s)) is not None:
+                    g = m
+                    break
+        else:
+            for matcher in matchers:
+                if (m := matcher.match(s)) is not None:
+                    g = m
+                    break
+        if g is None:
             raise ValueError("No valid version found") from e
 
         major = int(g.group("ma"))
         minor = int(g.group("mi"))
-        if "pa" in g.groupdict():
+        if "pa" in g.groupdict() and g.group("pa") is not None:
             patch = int(g.group("pa"))
         if "pre" in g.groupdict() and g.group("pre") is not None:
             prerelease = g.group("pre").casefold().strip("- ")
@@ -101,7 +154,6 @@ def parse_blender_ver(s: str, search=False) -> Version:
                 prerelease = None
 
         return Version(major=major, minor=minor, patch=patch, prerelease=prerelease)
-        # print(f"Parsed {s} to {v} using {matcher}")
 
 
 oldver_cutoff = Version(2, 83, 0)
@@ -129,14 +181,29 @@ class BuildInfo:
         if self.branch == "stable" and self.subversion.startswith(self.lts_versions):
             self.branch = "lts"
 
-    def __eq__(self, other: BuildInfo):
-        if (self is None) or (other is None):
+    def is_valid(self) -> bool:
+        """Check whether critical fields contain usable data."""
+        if not self.subversion:
             return False
-        if (self.build_hash is not None) and (other.build_hash is not None):
-            return self.build_hash == other.build_hash
+        try:
+            parse_blender_ver(self.subversion)
+        except (ValueError, Exception):
+            return False
+        if not self.branch:
+            return False
+        return isinstance(self.commit_time, datetime)
+
+    def __eq__(self, other: BuildInfo) -> bool:
+        if other is None:
+            return False
+
+        if self.build_hash and other.build_hash:
+            return self.build_hash == other.build_hash and self.branch == other.branch
 
         # Compare by semver major.minor.patch (ignore prerelease differences)
-        # This allows "4.5.2" to match "4.5.2-window" for Bforartists builds
+        # This allows matching when one side has no build_hash (e.g. stable
+        # scraper URLs don't contain a hash, but installed .blinfo files do),
+        # and also handles "4.5.2" matching "4.5.2-window" for Bforartists.
         try:
             self_ver = parse_blender_ver(self.subversion)
             other_ver = parse_blender_ver(other.subversion)
@@ -144,13 +211,14 @@ class BuildInfo:
                 self_ver.major == other_ver.major
                 and self_ver.minor == other_ver.minor
                 and self_ver.patch == other_ver.patch
+                and self.branch == other.branch
             )
         except (ValueError, Exception):
             # Fall back to string comparison if parsing fails
-            return self.subversion == other.subversion
+            return self.subversion == other.subversion and self.branch == other.branch
 
     @property
-    def semversion(self):
+    def semversion(self) -> Version:
         return parse_blender_ver(self.subversion)
 
     @property
@@ -163,11 +231,17 @@ class BuildInfo:
 
     @property
     def display_label(self):
+        if self.custom_name:
+            return self.custom_name
         return self._display_label(self.branch, self.semversion, self.subversion)
 
     @property
     def bforartist_version_matcher(self):
         return bfa_version_matcher(self.semversion)
+
+    @property
+    def upbge_version_matcher(self):
+        return upbge_version_matcher(self.semversion)
 
     @staticmethod
     @cache
@@ -197,6 +271,14 @@ class BuildInfo:
             else:
                 b = subv.split("-", 1)[-1].title()
             return b
+
+        # Handle UPBGE branches specially
+        if branch.startswith("upbge"):
+            parts = branch.split("-")
+            if len(parts) == 2:
+                return f"UPBGE {parts[1].title()}"
+            return "UPBGE"
+
         if v.prerelease is not None:
             if v.prerelease.startswith("rc"):
                 return f"Release Candidate {v.prerelease[2:]}"
@@ -224,19 +306,24 @@ class BuildInfo:
     def from_dict(cls, link: str, blinfo: dict):
         try:
             dt = datetime.fromisoformat(blinfo["commit_time"])
-        except ValueError:  # old file version compatibility
+        except (ValueError, KeyError):  # old file version compatibility or missing key
             try:
                 dt = datetime.strptime(blinfo["commit_time"], "%d-%b-%y-%H:%M").astimezone()
             except Exception:
-                dt = dateparser.parse(blinfo["commit_time"]).astimezone()
+                dt = dateparser.parse(blinfo.get("commit_time", ""))
+                if dt is None:
+                    dt = datetime.now().astimezone()
+                else:
+                    dt = dt.astimezone()
+
         return cls(
             link,
-            blinfo["subversion"],
-            blinfo["build_hash"],
+            blinfo.get("subversion", ""),
+            blinfo.get("build_hash"),
             dt,
-            blinfo["branch"],
-            blinfo["custom_name"],
-            blinfo["is_favorite"],
+            blinfo.get("branch", ""),
+            blinfo.get("custom_name", ""),
+            blinfo.get("is_favorite", False),
             blinfo.get("custom_executable", ""),
             blinfo.get("is_frozen", False),
         )
@@ -258,11 +345,27 @@ class BuildInfo:
             ],
         }
 
+    @classmethod
+    def from_blender_path(cls, path: Path):
+        return cls(
+            str(path),
+            "0.0.0",
+            "",
+            datetime.now(tz=UTC),
+            path.parent.name,
+            str(path.name),
+            False,
+            None,
+        )
+
     def write_to(self, path: Path):
         data = self.to_dict()
         blinfo = path / ".blinfo"
-        with blinfo.open("w", encoding="utf-8") as file:
-            json.dump(data, file)
+        try:
+            with blinfo.open("w", encoding="utf-8") as file:
+                json.dump(data, file)
+        except OSError as e:
+            logger.warning(f"Failed to write .blinfo for {path}: {e}")
         return data
 
     def __lt__(self, other: BuildInfo):
@@ -285,7 +388,22 @@ def fill_blender_info(exe: Path, info: BuildInfo | None = None) -> tuple[datetim
         )
         raise FileNotFoundError(f"Executable not found: {exe}")
 
-    version = _check_output([exe.as_posix(), "-v"]).decode("UTF-8")
+    version = None
+    try:
+        version = _check_output([exe.as_posix(), "-v"]).decode("UTF-8")
+    except Exception as e:
+        # If exe -v fails (e.g., crashes with SIGSEGV) and we have info from scraper, use that
+        if info is not None:
+            logger.warning(f"Failed to run '{exe} -v': {e}. Using scraper info as fallback.")
+            return (
+                info.commit_time,
+                info.build_hash or "",
+                info.subversion or "",
+                info.custom_name or "",
+            )
+        raise
+
+    strptime = None
     build_hash = ""
     subversion = ""
     custom_name = ""
@@ -302,15 +420,16 @@ def fill_blender_info(exe: Path, info: BuildInfo | None = None) -> tuple[datetim
                 ).astimezone()
             except Exception:
                 strptime = dateparser.parse(f"{cdate[1].rstrip()} {ctime[1].rstrip()}")
-        else:
-            strptime = datetime.now().astimezone()
     else:
         strptime = info.commit_time
+
+    if strptime is None:
+        strptime = datetime.now().astimezone()
 
     if s := re.search("build hash: (.*)", version):
         build_hash = s[1].rstrip()
 
-    if info is not None and info.subversion is not None:
+    if info is not None and info.subversion:
         subversion = info.subversion
     elif s := re.search(r"(?:Blender|Bforartists) (.*)", version):
         subversion = s[1].rstrip()
@@ -331,24 +450,19 @@ def read_blender_version(
     old_build_info: BuildInfo | None = None,
     archive_name=None,
 ) -> BuildInfo:
-    # Track if we have valid old build info that we can reuse
     reuse_old_info = False
+    found_nonstandard_path = False
     corrected_exe_path = None
 
     if old_build_info is not None and old_build_info.custom_executable:
         exe_path = path / old_build_info.custom_executable
-        # If the custom executable doesn't exist, fall back to auto-detection
+
         if not exe_path.exists():
             logger.warning(f"Custom executable not found: {exe_path}, falling back to auto-detection for {path.name}")
-            # We still have the build info, just need to find the correct executable path
             reuse_old_info = True
         else:
-            # Custom executable path is valid, use it
             corrected_exe_path = exe_path
             logger.debug(f"Using custom executable: {exe_path}")
-
-    # Track if we found a non-standard path that should be saved as custom_executable
-    found_nonstandard_path = False
 
     if corrected_exe_path is None:
         platform = get_platform()
@@ -386,7 +500,7 @@ def read_blender_version(
             corrected_exe_path = path / blender_exe
 
     # If we're reusing old info and found the correct executable, skip the slow version check
-    if reuse_old_info and corrected_exe_path and corrected_exe_path.exists():
+    if reuse_old_info and old_build_info is not None and corrected_exe_path and corrected_exe_path.exists():
         logger.info(f"Reusing build info, updated executable path to: {corrected_exe_path.relative_to(path)}")
         commit_time = old_build_info.commit_time
         build_hash = old_build_info.build_hash
@@ -490,6 +604,20 @@ def fill_build_info(
             )
             new_build_info.write_to(path)
             return new_build_info
+
+        # Validate blinfo; regenerate if corrupt
+        if not build_info.is_valid():
+            logger.warning(
+                f"Invalid .blinfo data for {path} (subversion={build_info.subversion!r}, branch={build_info.branch!r}), regenerating"
+            )
+            new_build_info = read_blender_version(
+                path,
+                build_info,
+                archive_name,
+            )
+            new_build_info.write_to(path)
+            return new_build_info
+
         return build_info
 
     # Generating new build information
@@ -558,6 +686,8 @@ def get_args(info: BuildInfo, exe=None, launch_mode: LaunchMode | None = None, l
                     and (launcher := (library_folder / info.link / "blender-launcher.exe")).exists()
                 ):
                     b3d_exe = launcher
+                elif (bfa_exe := (library_folder / info.link / "bforartists.exe")).exists():
+                    b3d_exe = bfa_exe
                 else:
                     b3d_exe = library_folder / info.link / "blender.exe"
 
@@ -584,27 +714,45 @@ def get_args(info: BuildInfo, exe=None, launch_mode: LaunchMode | None = None, l
         cexe = info.custom_executable
         if cexe:
             b3d_exe = library_folder / info.link / cexe
+        elif (bfa_exe := (library_folder / info.link / "bforartists")).exists():
+            b3d_exe = bfa_exe
         else:
             b3d_exe = library_folder / info.link / "blender"
 
         args = f'{bash_args} "{b3d_exe.as_posix()}" {blender_args}'
 
     elif platform == "macOS":
-        # Auto-detect .app bundle path
-        # Priority: Bforartists (DMG) > Blender (DMG) > Blender (standard)
-        bforartists_app = Path(info.link) / "Bforartists.app"
-        blender_app = Path(info.link) / "Blender.app"
-        blender_standard_app = Path(info.link) / "Blender" / "Blender.app"
-
-        if bforartists_app.is_dir():
-            # macOS: Bforartists from DMG extraction
-            b3d_exe = bforartists_app
-        elif blender_app.is_dir():
-            # macOS: Blender from DMG extraction
-            b3d_exe = blender_app
+        # Check custom_executable first (for UPBGE, etc.)
+        cexe = info.custom_executable
+        if cexe:
+            # custom_executable contains path like "Blenderplayer.app/Contents/MacOS/Blenderplayer"
+            # Extract the .app bundle path for 'open' command
+            cexe_path = Path(cexe)
+            app_bundle = None
+            for part in cexe_path.parts:
+                if part.endswith(".app"):
+                    app_bundle = part
+                    break
+            if app_bundle:
+                b3d_exe = Path(info.link) / app_bundle
+            else:
+                b3d_exe = Path(info.link) / cexe
         else:
-            # macOS: Standard Blender structure (fallback)
-            b3d_exe = blender_standard_app
+            # Auto-detect .app bundle path
+            # Priority: Bforartists (DMG) > Blender (DMG) > Blender (standard)
+            bforartists_app = Path(info.link) / "Bforartists.app"
+            blender_app = Path(info.link) / "Blender.app"
+            blender_standard_app = Path(info.link) / "Blender" / "Blender.app"
+
+            if bforartists_app.is_dir():
+                # macOS: Bforartists from DMG extraction
+                b3d_exe = bforartists_app
+            elif blender_app.is_dir():
+                # macOS: Blender from DMG extraction
+                b3d_exe = blender_app
+            else:
+                # macOS: Standard Blender structure (fallback)
+                b3d_exe = blender_standard_app
 
         args = f"open -W -n {shlex.quote(b3d_exe.as_posix())} --args"
 
@@ -632,9 +780,34 @@ def launch_build(info: BuildInfo, exe=None, launch_mode: LaunchMode | None = Non
 def bfa_version_matcher(bfa_blender_version: Version) -> Version | None:
     versions = read_blender_version_list()
     for i, version in enumerate(versions):
-        if version.match(f"{bfa_blender_version.major}.{bfa_blender_version.minor}"):
+        if version.match(f"{bfa_blender_version.major}.{bfa_blender_version.minor}.0"):
             if i + 1 < len(versions) and i > 0:
                 return versions[i - 1]
             else:
+                # If this code is triggered this usually means that the latest Blender version in the api file have note been added yet.
+                # Bforartist version are offset by one minor version compared to Blender versioning but use the Blender versioning for the config file.
+                # Bforartist versioning: 5.0,0 -> Blender versioning: 5.1.0 -> config version file: 5.1
+                logger.warning(
+                    "No matching Bforartists version found, if this append on the latest vesrion of bforartists, please report to developer."
+                )
                 return None
     return None
+
+
+def upbge_version_matcher(upbge_blender_version: Version) -> Version | None:
+    versions = read_blender_version_list()
+    upbge_str_version = str(upbge_blender_version.minor)
+
+    if len(upbge_str_version) == 3:
+        matching_version = Version(int(upbge_str_version[:2]), int(upbge_str_version[2]))
+    elif len(upbge_str_version) == 2:
+        matching_version = Version(int(upbge_str_version[0]), int(upbge_str_version[1]))
+    else:
+        logger.error("Fail to generate the UPBGE config version from the main version")
+        return None
+
+    if matching_version in versions:
+        return matching_version
+    else:
+        logger.error("Version not matching a known Blender config version")
+        return None

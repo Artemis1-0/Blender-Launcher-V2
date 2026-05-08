@@ -6,12 +6,15 @@ import logging
 import subprocess
 import sys
 from pathlib import Path
-from typing import NoReturn, Sequence
+from typing import TYPE_CHECKING, NoReturn
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
 
 from modules.blendfile_reader import read_blendfile_header
 from modules.build_info import BuildInfo, LaunchMode, LaunchOpenLast, LaunchWithBlendFile, get_args
-from modules.settings import get_favorite_path, get_version_specific_queries
-from modules.version_matcher import BasicBuildInfo, BInfoMatcher, VersionSearchQuery
+from modules.settings import build_library_folders, get_favorite_path, get_version_specific_queries
+from modules.version_matcher import BasicBuildInfo, VersionSearchQuery
 from threads.library_drawer import get_blender_builds
 
 logger = logging.getLogger()
@@ -26,7 +29,7 @@ def cli_launch(
     # Search for builds
     logger.info("Searching for all builds")
     builds: list[BuildInfo] = []
-    for build, _ in get_blender_builds(folders=("stable", "daily", "experimental", "custom")):
+    for build, _ in get_blender_builds(folders=build_library_folders):
         if (blinfo := build / ".blinfo").exists():
             with blinfo.open("r", encoding="utf-8") as f:
                 blinfo = json.load(f)
@@ -51,10 +54,9 @@ def cli_launch(
 
     basics = {BasicBuildInfo.from_buildinfo(b): b for b in builds}
 
-    matcher = BInfoMatcher(tuple(basics.keys()))
-
     all_queries = get_version_specific_queries()
 
+    query: VersionSearchQuery | None = None
     if version_query is not None:
         query = version_query
 
@@ -69,13 +71,13 @@ def cli_launch(
             if v in all_queries:
                 query = all_queries[v]
             else:
-                query = VersionSearchQuery(v.major, v.minor, "^")
+                query = VersionSearchQuery.version(v.major, v.minor, "^")
 
     if query is None:
         logger.warning("Could not read file header and no version was provided! defaulting to ^.^.^")
-        query = VersionSearchQuery("^", "^", "^")
+        query = VersionSearchQuery.default()
 
-    matches = matcher.match(query)
+    matches = query.match(basics.keys())
 
     launch_mode: LaunchMode | None = None
     if file is not None:

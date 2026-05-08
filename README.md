@@ -11,9 +11,9 @@
 [![Github All Releases download count](https://img.shields.io/github/downloads/Victor-IX/Blender-Launcher-V2/total.svg?style=flat)](https://github.com/Victor-IX/Blender-Launcher-V2/releases/latest)
 [![Github All Releases download count](https://img.shields.io/github/contributors/Victor-IX/Blender-Launcher-V2)](https://github.com/Victor-IX/Blender-Launcher-V2/graphs/contributors)
 
-# [Discussions](https://github.com/Victor-IX/Blender-Launcher-V2/discussions) │ [Discord](https://discord.gg/3jrTZFJkTd) | [Documentation](https://Victor-IX.github.io/Blender-Launcher-V2) │ [Latest Release](https://github.com/Victor-IX/Blender-Launcher-V2/releases/latest)
+## [Discussions](https://github.com/Victor-IX/Blender-Launcher-V2/discussions) │ [Discord](https://discord.gg/3jrTZFJkTd) | [Documentation](https://Victor-IX.github.io/Blender-Launcher-V2) │ [Latest Release](https://github.com/Victor-IX/Blender-Launcher-V2/releases/latest)
 
-# Original [Project](https://github.com/DotBow/Blender-Launcher) By [DotBow](https://github.com/DotBow)
+### Original [Project](https://github.com/DotBow/Blender-Launcher) By [DotBow](https://github.com/DotBow)
 
 > This project exists because [DotBow/Blender-Launcher](https://github.com/DotBow/Blender-Launcher) has been inactive since October of 2022. It was archived on the 28th of November, 2023 and no longer receives updates.
 
@@ -36,7 +36,7 @@
 
 ## What is Blender Launcher?
 
-Blender Launcher is a standalone software client that provides management for stable, daily and experimental builds of [Blender 3D](https://www.blender.org/). It is a free open source project available for 64-bit Windows and Linux (GLIBC 2.31 and higher) operating systems.
+Blender Launcher is a standalone software client that provides management for stable, daily and experimental builds of [Blender 3D](https://www.blender.org/) and its most popular forks [Bforartists](https://www.bforartists.de/) and [UPBGE](https://upbge.org/). It is a free open source project available for 64-bit Windows, Linux (GLIBC 2.31 and higher) and macOS operating systems.
 
 ## Why do I need it?
 
@@ -63,8 +63,12 @@ Blender Launcher V2 introduces a number of major improvements:
   * [Stable releases](https://download.blender.org/release/)
   * [Daily builds](https://builder.blender.org/download/daily/)
   * [Experimental branches](https://builder.blender.org/download/branches/)
+* Support for popular Blender forks:
+  * [Bforartists](https://www.bforartists.de/download/) - UI-focused fork
+  * [UPBGE](https://upbge.org/) - Game engine fork (Stable and Weekly builds)
 * Faster starting times by caching data
 * Support for high DPI displays
+* Multiple power user features and quality of life improvements
 
 
 
@@ -80,4 +84,4 @@ Blender Launcher V2 introduces a number of major improvements:
 
 ***
 
-:sparkling_heart: Thanx for using Blender Launcher! Have a nice day!
+:sparkling_heart: Thanks for using Blender Launcher! Have a nice day!

@@ -1,43 +1,40 @@
 from __future__ import annotations
 
+import argparse
 import gettext
 import logging
 import os
 import sys
-import argparse
 from argparse import ArgumentParser
 from pathlib import Path
-from typing import NoReturn, Sequence
+from typing import TYPE_CHECKING, NoReturn
 
-import modules._resources_rc
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+import modules._resources_rc  # noqa: F401
+import utils.i18n_init  # noqa: F401
 from modules import argument_parsing as ap
-from modules._platform import (
-    _popen,
-    get_cache_path,
-    get_cwd,
-    get_launcher_name,
-    get_platform,
-    is_frozen,
-)
 from modules.cli_launching import cli_launch
+from modules.file_utils import retry_on_permission_error
+from modules.fonts import Fonts
+from modules.platform_utils import _popen, get_cache_path, get_cwd, get_launcher_name, get_platform, is_frozen
+from modules.settings import get_auto_register_winget
 from modules.shortcut import register_windows_filetypes, unregister_windows_filetypes
+from modules.uninstall import perform_uninstall
 from modules.version_matcher import VALID_FULL_QUERIES, VERSION_SEARCH_SYNTAX
-from utils.logger import setup_logging
-from modules.version_matcher import (
-    VALID_FULL_QUERIES,
-    VALID_QUERIES,
-    VERSION_SEARCH_SYNTAX,
-)
+from modules.winget_integration import register_with_winget
+from PySide6.QtCore import QFile, QTextStream
 from PySide6.QtWidgets import QApplication
 from semver import Version
-from windows.popup_window import PopupWindow, PopupIcon
-
+from utils.dpi import apply_scale_factor
+from utils.logger import setup_logging
 
 version = Version(
     2,
-    5,
-    3,
-    # prerelease="rc.2",
+    7,
+    0,
+    prerelease="rc.1",
 )
 
 
@@ -152,6 +149,19 @@ def main():
         )
         subparsers.add_parser("unregister", help="Undoes the changes that `register` makes. (WIN ONLY)")
 
+        uninstall_parser = subparsers.add_parser(
+            "uninstall",
+            help="Fully uninstall Blender Launcher: removes settings, registry entries, shortcuts, and cached data. (WINDOWS ONLY)",
+            add_help=False,
+        )
+        add_help(uninstall_parser)
+        uninstall_parser.add_argument(
+            "--quiet",
+            "-q",
+            action="store_true",
+            help="Uninstall without confirmation prompt (used by winget).",
+        )
+
     input_args = None
 
     # Shortcut for launching
@@ -180,11 +190,19 @@ def main():
     # Log Blender Launcher version
     logger.info(f"Blender Launcher Version: {version}")
 
-    # Create an instance of application and set its core properties
-    app = QApplication(["blender-launcher-v2"])
-    app.setApplicationName("blender-launcher-v2")
-    app.setStyle("Fusion")
-    app.setApplicationVersion(str(version))
+    with apply_scale_factor():
+        # Create an instance of application and set its core properties
+        app = QApplication(["blender-launcher-v2"])
+        app.setApplicationName("blender-launcher-v2")
+        app.setStyle("Fusion")
+        app.setApplicationVersion(str(version))
+
+        # app style
+        file = QFile(":resources/styles/global.qss")
+        file.open(QFile.OpenModeFlag.ReadOnly | QFile.OpenModeFlag.Text)
+        style_sheet = QTextStream(file).readAll()
+        app.setStyleSheet(style_sheet)
+        app.setFont(Fonts.get().font_10)
 
     set_lib_folder: Path | None = args.set_library_folder
     if set_lib_folder is not None:
@@ -211,9 +229,15 @@ def main():
         start_register()
     if args.command == "unregister":
         start_unregister()
+    if args.command == "uninstall":
+        perform_uninstall(args.quiet)
 
     if not args.instanced:
         check_for_instance()
+
+    # Register with WinGet on startup
+    if get_platform() == "Windows" and get_auto_register_winget():
+        register_with_winget(sys.executable, str(version))
 
     from windows.main_window import BlenderLauncher
 
@@ -230,17 +254,17 @@ def main():
 
 
 def start_set_library_folder(app: QApplication, lib_folder: str):
+    from i18n import t
     from modules.settings import set_library_folder
+    from windows.popup_window import Popup
 
     if set_library_folder(str(lib_folder)):
         logging.info(f"Library folder set to {lib_folder!s}")
     else:
         logging.error("Failed to set library folder")
-        PopupWindow(
-            title="Warning",
-            message="Passed path is not a valid folder or<br>it doesn't have write permissions!",
-            icon=PopupIcon.WARNING,
-            button="Quit",
+        Popup.warning(
+            message=t("msg.err.library_invalid"),
+            buttons=Popup.Button.QUIT,
             app=app,
         ).show()
         sys.exit(app.exec())
@@ -260,7 +284,7 @@ def start_update(app: QApplication, is_instanced: bool, tag: str | None):
         cwd = get_cwd()
         source = cwd / bl_exe
         dist = cwd / blu_exe
-        shutil.copy(source, dist)
+        retry_on_permission_error(shutil.copy, source, dist)
 
         # Run the updater with the instanced flag
         if get_platform() == "Windows":

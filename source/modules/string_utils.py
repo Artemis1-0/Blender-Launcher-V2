@@ -1,7 +1,7 @@
 import re
-
 from pathlib import Path
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs, urlparse
+
 from bs4 import BeautifulSoup
 from markdown import markdown
 
@@ -16,13 +16,13 @@ def markdown_to_text(markdown_text: str) -> str:
 
     soup = BeautifulSoup(html, "html.parser")
 
-    return "".join(soup.findAll(text=True))
+    return "".join(soup.find_all(string=True))
 
 
 def add_bullet_point(text: str) -> str:
     lines = text.splitlines()
     for i, line in enumerate(lines):
-        if line.startswith("-") or line.startswith("*"):
+        if line.startswith(("-", "*")):
             lines[i] = line[:1] + " •" + line[1:]
     return "\n".join(lines)
 
@@ -35,9 +35,8 @@ def patch_note_cleaner(patch_note_text: str) -> str:
     lines = [line for line in lines if line.strip() != ""]
 
     # Add space after "What's Changed" header
-    if lines[0].startswith("What's Changed"):
-        if len(lines) == 1 or lines[1].strip() != "":
-            lines.insert(1, "")
+    if lines[0].startswith("What's Changed") and (len(lines) == 1 or lines[1].strip() != ""):
+        lines.insert(1, "")
 
     # Add space after colon
     for i in range(len(lines) - 1, -1, -1):

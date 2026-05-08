@@ -6,13 +6,19 @@ nav:
     - User Interface: user_interface.md
     - Library Folder: library_folder.md
     - Settings: settings.md
+    - Blender Forks: blender_forks.md
     - Manual Blender Installation: manual_build_installation.md
     - Build Initialization: build_initialization.md
     - File Association: file_association.md
+    - GitHub Token: github_token.md
     - Troubleshooting: troubleshooting.md
     - Known Issues: known_issues.md
     - Feature Request: feature_request.md
-    - Development: development.md
+    - Development:
+        - Overview: development.md
+        - Implementing New Fork: implementing_new_fork.md
+        - Localization: localization.md
+    - FAQ: FAQ.md
 docs_dir: mkdocs
 site_dir: site
 theme:
@@ -26,11 +32,13 @@ theme:
         - search.suggest
         - search.highlight
         - content.code.copy
+        - content.footnote.tooltips
     favicon: icons/favicon.ico
     logo: icons/favicon.ico
 markdown_extensions:
     - smarty
     - admonition
+    - footnotes
     - pymdownx.tabbed
     - pymdownx.superfences
     - pymdownx.tabbed:
@@ -62,4 +70,4 @@ extra_css:
     - stylesheets/extra.css
 repo_url: https://github.com/Victor-IX/Blender-Launcher-V2
 edit_uri: ""
-copyright: Copyright &copy; 2022 Victor Chedeville │ Blender Launcher GPL-3.0 License │ Version 2.3.0
+copyright: Copyright &copy; 2026 Victor Chedeville │ Blender Launcher GPL-3.0 License │ Version 2.3.0

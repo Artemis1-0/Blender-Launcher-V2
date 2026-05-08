@@ -26,6 +26,7 @@ class Language(StrEnum):
     FRENCH = "fr"
     JAPANESE = "ja"
     CHINESE = "zh"
+    IRISH = "ga"
 
     @property
     def display_name(self) -> str:
@@ -36,6 +37,7 @@ class Language(StrEnum):
             Language.FRENCH: "Français",
             Language.JAPANESE: "日本語",
             Language.CHINESE: "中文",
+            Language.IRISH: "Gaeilge",
         }
         return names[self]
 
